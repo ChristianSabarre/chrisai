@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: chrisai
+    env: python
+    python_version: "3.12"
+    build_command: pip install -r requirements.txt
+    start_command: python app.py
