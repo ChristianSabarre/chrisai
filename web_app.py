@@ -13,10 +13,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')  # Use environment variable
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')  
 
 # Configuration
-API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyDBKFb-gfTHYgX9CR_55VtJnO6Vm3xTjXc")  # Use environment variable
+API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyDBKFb-gfTHYgX9CR_55VtJnO6Vm3xTjXc")  
 COLLECTION_NAME = "valorant_patches"
 PATCH_NOTES_FILE = "feedme_patchnotes.json"
 EMBEDDING_DIMENSION = 768
@@ -36,7 +36,6 @@ class GeminiEmbedding:
                 embeddings.append(result['embedding'])
             except Exception as e:
                 logger.error(f"Error generating embedding for text: {e}")
-                # Return zero vector as fallback
                 embeddings.append([0.0] * EMBEDDING_DIMENSION)  
         return embeddings
 
@@ -44,7 +43,6 @@ class GeminiEmbedding:
         return "gemini-embedding"
 
 def setup_chromadb():
-    """Initialize ChromaDB client and collection."""
     try:
         client = chromadb.Client()
         collection = client.get_or_create_collection(
@@ -57,7 +55,6 @@ def setup_chromadb():
         logger.error(f"Error setting up ChromaDB: {e}")
         return None, None
 
-# Global variables for patch metadata
 dataset = []
 latest_patch = None
 oldest_patch = None
@@ -65,7 +62,6 @@ client = None
 collection = None
 
 def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
-    """Load and sort patch notes from JSON file."""
     global dataset, latest_patch, oldest_patch
     
     try:
@@ -76,13 +72,13 @@ def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
         with open(filename, "r", encoding="utf-8") as f:
             dataset = json.load(f)
         
-        # Sort by published date
+        # sort then use later 
         dataset_sorted = sorted(
             dataset,
             key=lambda x: datetime.strptime(x.get("published", "1970-01-01"), "%Y-%m-%d")
         )
 
-        # Identify oldest and latest patches
+        # oldest and latest patches
         if dataset_sorted:
             oldest_patch = dataset_sorted[0]
             latest_patch = dataset_sorted[-1]
@@ -95,7 +91,6 @@ def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
         return []
 
 def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bool:
-    """Add patch note documents to ChromaDB collection."""
     if not dataset:
         logger.warning("No data to add to collection")
         return False
@@ -110,7 +105,7 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
             patch_number = doc.get("patch", f"patch_{i}")
             title = doc.get("title", f"Patch {patch_number}")
             
-            if content.strip():  # Only add if there's actual content
+            if content.strip(): 
                 documents.append(content)
                 metadatas.append({
                     "source": "valorant_patch_notes",
@@ -125,7 +120,6 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
             logger.warning("No valid documents found to add")
             return False
         
-        # Add documents in batches
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             end_idx = min(i + batch_size, len(documents))
@@ -146,10 +140,10 @@ def validate_message(message: str) -> Optional[str]:
     if not message or not message.strip():
         return "Message cannot be empty"
     
-    if len(message) > 1000:  # Reasonable limit
+    if len(message) > 1000:  
         return "Message too long (max 1000 characters)"
     
-    # Basic sanitization - remove potentially harmful characters
+    # Basic sanitization para di ma hack
     dangerous_chars = ['<script', '</script', 'javascript:', 'data:']
     message_lower = message.lower()
     for char in dangerous_chars:
@@ -159,20 +153,16 @@ def validate_message(message: str) -> Optional[str]:
     return None
 
 def chat_chris(prompt: str, collection, k: int = 5) -> str:
-    """Generate AI response using RAG with ChromaDB and Gemini."""
     try:
-        # Validate input
         validation_error = validate_message(prompt)
         if validation_error:
             return f"Error: {validation_error}"
         
-        # Query the collection for relevant documents
         results = collection.query(
             query_texts=[prompt],
             n_results=k
         )
         
-        # Handle empty results
         if not results['documents'] or not results['documents'][0]:
             context = "No relevant patch notes found for your query."
             retrieved_docs = []
@@ -181,14 +171,12 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
             retrieved_docs = results['documents'][0]
             retrieved_metadata = results['metadatas'][0] if results['metadatas'] else []
 
-        # Get current date and patch info
         current_date = datetime.now().strftime("%Y-%m-%d")
         latest_title = latest_patch.get("title", "N/A") if latest_patch else "N/A"
         latest_date = latest_patch.get("published", "N/A") if latest_patch else "N/A"
         oldest_title = oldest_patch.get("title", "N/A") if oldest_patch else "N/A"
         oldest_date = oldest_patch.get("published", "N/A") if oldest_patch else "N/A"
 
-        # Create enhanced context with metadata
         enhanced_context_parts = []
         for i, doc in enumerate(retrieved_docs):
             metadata = retrieved_metadata[i] if i < len(retrieved_metadata) else {}
@@ -197,16 +185,13 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
             
             enhanced_context_parts.append(f"[PATCH: {patch_title} - Published: {patch_date}]\n{doc}")
 
-        # Automatically include latest patch content if not already in results
         if latest_patch:
             latest_content = latest_patch.get("final_content", "")
             if latest_content and latest_content not in retrieved_docs:
                 enhanced_context_parts.insert(0, f"[LATEST PATCH: {latest_title} - Published: {latest_date}]\n{latest_content}")
 
-        # Combine context for the model
         context = "\n\n---\n\n".join(enhanced_context_parts) if enhanced_context_parts else "No relevant patch notes found."
 
-        # Create chronological awareness
         def calculate_recency(date_str):
             try:
                 patch_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -302,24 +287,20 @@ If you don't have good recent info, say something like "Hmm, I don't see any rec
         return "Sorry, I'm having trouble processing your request right now. Try asking again in a moment!"
 
 def initialize_system():
-    """Initialize the system components."""
     global client, collection
     
     logger.info("Initializing Valorant Patch Notes RAG System...")
     
-    # Setup ChromaDB
     client, collection = setup_chromadb()
     if not collection:
         logger.error("Failed to setup ChromaDB.")
         return False
     
-    # Load patch notes
     dataset_sorted = load_patch_notes(PATCH_NOTES_FILE)
     if not dataset_sorted:
         logger.error("No patch notes loaded.")
         return False
     
-    # Add documents to collection if empty
     if collection.count() == 0:
         logger.info("Collection is empty. Adding patch notes...")
         if not add_documents_to_collection(collection, dataset_sorted):
@@ -331,38 +312,31 @@ def initialize_system():
     logger.info("System initialization complete!")
     return True
 
-# Initialize system when module is imported
 initialize_system()
 
 @app.route('/')
 def index():
-    """Serve the main chat interface."""
     return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    """Handle chat requests."""
     try:
-        # Validate request
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
         data = request.get_json()
         user_message = data.get('message', '').strip()
         
-        # Validate message
+        
         validation_error = validate_message(user_message)
         if validation_error:
             return jsonify({'error': validation_error}), 400
         
-        # Check system status
         if not collection:
             return jsonify({'error': 'System not initialized properly'}), 500
         
-        # Generate response
         response = chat_chris(user_message, collection)
         
-        # Create chat message objects
         user_msg = {
             'id': str(uuid.uuid4()),
             'message': user_message,
@@ -388,7 +362,6 @@ def chat():
 
 @app.route('/health')
 def health():
-    """Health check endpoint."""
     try:
         status = {
             'status': 'healthy',
@@ -411,7 +384,6 @@ def health():
 
 @app.route('/stats')
 def stats():
-    """Get system statistics."""
     try:
         if not collection:
             return jsonify({'error': 'System not initialized'}), 500
