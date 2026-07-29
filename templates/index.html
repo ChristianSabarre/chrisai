@@ -585,6 +585,16 @@
         const typing = document.getElementById('typing');
         const welcome = document.getElementById('welcome');
 
+        // Conversation kept client-side so the server stays stateless. Trimmed
+        // to the same window the server accepts.
+        const MAX_TURNS = 6;
+        const history = [];
+
+        function remember(role, content) {
+            history.push({ role: role, content: content });
+            while (history.length > MAX_TURNS) history.shift();
+        }
+
         function clock() {
             return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
@@ -690,7 +700,7 @@
             const res = await fetch('/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: message })
+                body: JSON.stringify({ message: message, history: history.slice() })
             });
             const data = await res.json();
             if (!res.ok) {
@@ -698,6 +708,8 @@
                 return;
             }
             addMessage(data.bot_message.message, 'bot', data.bot_message.sources);
+            remember('user', message);
+            remember('assistant', data.bot_message.message);
         }
 
         async function ask(message) {
@@ -706,7 +718,7 @@
                 res = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message })
+                    body: JSON.stringify({ message: message, history: history.slice() })
                 });
             } catch (err) {
                 showError('Network error. Check your connection and try again.');
@@ -773,6 +785,12 @@
             if (handle && !handle.text() && !failed) {
                 handle.remove();
                 showError('No response came back. Try that again?');
+                return;
+            }
+
+            if (handle && handle.text()) {
+                remember('user', message);
+                remember('assistant', handle.text());
             }
         }
 

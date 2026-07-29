@@ -144,6 +144,44 @@
   },
 
   {
+    "id": "followup-sage",
+    "category": "follow_up",
+    "question": "what about Sage?",
+    "history": [
+      {"role": "user", "content": "Has Jett been nerfed?"},
+      {"role": "assistant", "content": "Yes, Jett was nerfed across patches 3.0, 3.06 and 7.04."}
+    ],
+    "expect_condensed_contains": "sage",
+    "expect_mode": "semantic",
+    "expect_any_patch": true,
+    "answer_should_mention": ["sage"]
+  },
+  {
+    "id": "followup-pronoun",
+    "category": "follow_up",
+    "question": "and her ultimate?",
+    "history": [
+      {"role": "user", "content": "Has Jett been nerfed?"},
+      {"role": "assistant", "content": "Yes, Jett was nerfed across patches 3.0, 3.06 and 7.04."}
+    ],
+    "expect_condensed_contains": "jett",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+  {
+    "id": "followup-standalone-untouched",
+    "category": "follow_up",
+    "question": "What changed in patch 11.00?",
+    "history": [
+      {"role": "user", "content": "Has Jett been nerfed?"},
+      {"role": "assistant", "content": "Yes, Jett was nerfed across patches 3.0, 3.06 and 7.04."}
+    ],
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["11.00"],
+    "answer_should_mention": ["corrode"]
+  },
+
+  {
     "id": "absent-2500",
     "category": "not_in_data",
     "question": "What changed in patch 25.00?",

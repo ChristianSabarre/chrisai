@@ -118,16 +118,28 @@ def main():
     by_category = {}
 
     for case in cases:
-        result = retrieval.search(app.collection, case["question"],
+        # Cases carrying history exercise the follow-up rewrite, which costs an
+        # extra call; cases without one skip it entirely.
+        history = app.normalize_history(case.get("history"))
+        search_query = app.condense_question(case["question"], history)
+
+        if case.get("expect_condensed_contains"):
+            wanted = case["expect_condensed_contains"].lower()
+            if wanted not in search_query.lower():
+                case.setdefault("_extra", []).append(
+                    f"condensed to {search_query!r}, missing {wanted!r}")
+
+        result = retrieval.search(app.collection, search_query,
                                   known_keys=keys, latest_key=latest, k=6)
         problems, found = grade_retrieval(case, result)
+        problems += case.pop("_extra", [])
 
         answer = ""
         if args.answers:
             answer = app.mistral_chat(
                 build_system_prompt(corpus),
                 build_user_prompt(retrieval.format_context(result["rows"]),
-                                  case["question"]),
+                                  search_query),
             )
             problems += grade_answer(case, answer)
 

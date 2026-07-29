@@ -124,3 +124,30 @@ def build_user_prompt(context: str, question: str) -> str:
 {context}
 
 Question: {question}"""
+
+
+CONDENSE_SYSTEM = """You rewrite follow-up questions so they can stand alone.
+
+Given the conversation so far and a follow-up, produce a single self-contained
+question with every pronoun and implied reference resolved from the history.
+
+Rules:
+- Output only the rewritten question. No preamble, no quotes, no explanation.
+- Keep it short and keep the user's own wording where you can.
+- Carry over the agent, weapon, map or patch the follow-up depends on.
+- If the follow-up already stands alone, repeat it back unchanged."""
+
+
+def build_condense_prompt(history: List[Dict[str, str]], question: str) -> str:
+    lines = []
+    for turn in history:
+        speaker = "User" if turn.get("role") == "user" else "Assistant"
+        lines.append(f"{speaker}: {turn.get('content', '')}")
+    transcript = "\n".join(lines) if lines else "(nothing yet)"
+
+    return f"""Conversation so far:
+{transcript}
+
+Follow-up: {question}
+
+Rewritten standalone question:"""

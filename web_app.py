@@ -16,7 +16,13 @@ from mistral_client import (
     chat as mistral_chat,
     chat_stream as mistral_chat_stream,
 )
-from prompts import build_system_prompt, build_user_prompt, describe_corpus
+from prompts import (
+    CONDENSE_SYSTEM,
+    build_condense_prompt,
+    build_system_prompt,
+    build_user_prompt,
+    describe_corpus,
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -144,16 +150,104 @@ def validate_message(message: str) -> Optional[str]:
     
     return None
 
-def chat_chris(prompt: str, collection, k: int = 5) -> Dict[str, Any]:
+# Turns of prior conversation kept. Enough for a thread of follow-ups without
+# letting an unbounded client-supplied history into every prompt.
+MAX_HISTORY_TURNS = 6
+
+_DEPENDENT_MARKERS = (
+    "it", "its", "that", "this", "those", "these", "they", "them", "their",
+    "he", "him", "his", "she", "her", "hers", "same", "instead", "too", "also",
+)
+_DEPENDENT_OPENERS = (
+    "what about", "how about", "and ", "but ", "why", "when did", "what else",
+    "any others", "the other", "same for",
+)
+
+
+def normalize_history(raw: Any) -> List[Dict[str, str]]:
+    """Coerce client-supplied history into a safe, bounded message list."""
+    if not isinstance(raw, list):
+        return []
+
+    turns = []
+    for item in raw[-MAX_HISTORY_TURNS:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        content = content.strip()[:2000]
+        if content:
+            turns.append({"role": role, "content": content})
+    return turns
+
+
+def _looks_dependent(question: str) -> bool:
+    """Does this question need earlier turns to make sense?
+
+    Deliberately conservative. Rewriting a question that already stands on its
+    own does damage: asked "what changed in patch 13.02?" after a thread about
+    Jett, the rewriter helpfully returns "what changed in patch 13.02 for
+    Jett?", narrowing a question the user asked broadly.
+    """
+    lowered = question.lower().strip()
+    if not lowered:
+        return False
+
+    # Naming a patch anchors the question by itself.
+    if retrieval.VERSION_IN_QUERY.search(question):
+        return False
+
+    if lowered.startswith(_DEPENDENT_OPENERS):
+        return True
+
+    words = lowered.replace("?", " ").replace(",", " ").split()
+    return any(w in _DEPENDENT_MARKERS for w in words)
+
+
+def condense_question(question: str, history: List[Dict[str, str]]) -> str:
+    """Rewrite a follow-up into a standalone question for retrieval.
+
+    "What about Sage?" retrieves almost nothing on its own; resolved against the
+    previous turn it becomes a query that can actually match. Only follow-ups
+    that appear to depend on earlier turns pay for the extra call, and any
+    failure falls back to the original wording rather than blocking the answer.
+    """
+    if not history or not _looks_dependent(question):
+        return question
+
+    try:
+        rewritten = mistral_chat(
+            CONDENSE_SYSTEM, build_condense_prompt(history, question)
+        ).strip().strip('"')
+    except Exception as e:
+        logger.warning(f"Question condensing failed, using original: {e}")
+        return question
+
+    # A rewrite that comes back empty or wildly long is not a question.
+    if not rewritten or len(rewritten) > 300:
+        return question
+
+    if rewritten.lower() != question.lower():
+        logger.info(f"condensed {question!r} -> {rewritten!r}")
+    return rewritten
+
+
+def chat_chris(prompt: str, collection, k: int = 5,
+               history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """Answer a question and report which patches the answer was drawn from."""
     try:
         validation_error = validate_message(prompt)
         if validation_error:
             return {"answer": f"Error: {validation_error}", "sources": []}
 
+        history = normalize_history(history)
+        search_query = condense_question(prompt, history)
+
         result = retrieval.search(
             collection,
-            prompt,
+            search_query,
             known_keys=patch_keys,
             latest_key=(latest_patch or {}).get("patch_key"),
             k=k,
@@ -169,7 +263,12 @@ def chat_chris(prompt: str, collection, k: int = 5) -> Dict[str, Any]:
 
         corpus = describe_corpus(dataset)
         system_prompt = build_system_prompt(corpus)
-        user_prompt = build_user_prompt(context, prompt)
+        # Answer the resolved question, not the raw one, and without replaying
+        # the transcript. Earlier turns in the prompt bent answers toward the
+        # previous topic: asked what changed in patch 11.00 during a thread
+        # about Jett, the model replied that nothing about Jett changed in it.
+        # Condensing already carries the context that the follow-up depends on.
+        user_prompt = build_user_prompt(context, search_query)
 
         answer = mistral_chat(system_prompt, user_prompt)
         return {"answer": answer, "sources": sources}
@@ -257,7 +356,8 @@ def chat():
         if not collection:
             return jsonify({'error': 'System not initialized properly'}), 500
         
-        result = chat_chris(user_message, collection)
+        result = chat_chris(user_message, collection,
+                            history=data.get('history'))
 
         user_msg = {
             'id': str(uuid.uuid4()),
@@ -298,7 +398,8 @@ def chat_stream_route():
     if not request.is_json:
         return jsonify({'error': 'Request must be JSON'}), 400
 
-    user_message = (request.get_json() or {}).get('message', '').strip()
+    payload = request.get_json() or {}
+    user_message = payload.get('message', '').strip()
     validation_error = validate_message(user_message)
     if validation_error:
         return jsonify({'error': validation_error}), 400
@@ -306,9 +407,11 @@ def chat_stream_route():
         return jsonify({'error': 'System not initialized properly'}), 500
 
     try:
+        history = normalize_history(payload.get('history'))
+        search_query = condense_question(user_message, history)
         result = retrieval.search(
             collection,
-            user_message,
+            search_query,
             known_keys=patch_keys,
             latest_key=(latest_patch or {}).get("patch_key"),
             k=5,
@@ -319,7 +422,7 @@ def chat_stream_route():
 
         corpus = describe_corpus(dataset)
         system_prompt = build_system_prompt(corpus)
-        user_prompt = build_user_prompt(retrieval.format_context(rows), user_message)
+        user_prompt = build_user_prompt(retrieval.format_context(rows), search_query)
     except Exception as e:
         logger.error(f"Retrieval failed: {e}")
         return jsonify({'error': 'An internal error occurred'}), 500
