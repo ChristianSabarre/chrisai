@@ -152,23 +152,14 @@ def _extract_text(content) -> str:
     return str(content)
 
 
-def _build_messages(
-    system_prompt: str,
-    user_prompt: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> List[Dict[str, str]]:
-    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": user_prompt})
-    return messages
+def _build_messages(system_prompt: str, user_prompt: str) -> List[Dict[str, str]]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
-def chat_stream(
-    system_prompt: str,
-    user_prompt: str,
-    history: Optional[List[Dict[str, str]]] = None,
-):
+def chat_stream(system_prompt: str, user_prompt: str):
     """Yield reply text incrementally.
 
     Retries wrap only the call that opens the stream. Once tokens are flowing a
@@ -178,7 +169,7 @@ def chat_stream(
     stream = _with_retries(
         lambda: get_client().chat.stream(
             model=CHAT_MODEL,
-            messages=_build_messages(system_prompt, user_prompt, history),
+            messages=_build_messages(system_prompt, user_prompt),
             temperature=CHAT_TEMPERATURE,
         ),
         what="chat stream",
@@ -194,13 +185,13 @@ def chat_stream(
                 yield piece
 
 
-def chat(
-    system_prompt: str,
-    user_prompt: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    """Send a grounded RAG turn to Mistral and return the reply text."""
-    messages = _build_messages(system_prompt, user_prompt, history)
+def chat(system_prompt: str, user_prompt: str) -> str:
+    """Send a grounded RAG turn to Mistral and return the reply text.
+
+    Deliberately single-turn. Follow-ups are resolved into standalone questions
+    before they get here, rather than by replaying the transcript.
+    """
+    messages = _build_messages(system_prompt, user_prompt)
 
     response = _with_retries(
         lambda: get_client().chat.complete(

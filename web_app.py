@@ -8,6 +8,7 @@ import uuid
 import logging
 
 import hashlib
+import secrets
 
 import retrieval
 from mistral_client import (
@@ -29,7 +30,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+# Random per-process fallback rather than a checked-in constant. Nothing here
+# uses sessions, but a published default secret is worth not having.
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
 # Configuration
 COLLECTION_NAME = "valorant_patches"
@@ -134,20 +137,21 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
         return False
 
 def validate_message(message: str) -> Optional[str]:
-    """Validate user input message."""
+    """Validate user input message.
+
+    No substring blocklist. It used to reject any message containing 'data:',
+    'javascript:' or '<script', which turned away legitimate questions such as
+    "any changes to the data: agent stats?" while preventing nothing: replies
+    are written to the page with textContent, so markup in a message is never
+    parsed as markup. Blocking real questions to defend a hole that does not
+    exist is a bad trade.
+    """
     if not message or not message.strip():
         return "Message cannot be empty"
-    
-    if len(message) > 1000:  
+
+    if len(message) > 1000:
         return "Message too long (max 1000 characters)"
-    
-    # Basic sanitization para di ma hack
-    dangerous_chars = ['<script', '</script', 'javascript:', 'data:']
-    message_lower = message.lower()
-    for char in dangerous_chars:
-        if char in message_lower:
-            return "Message contains invalid characters"
-    
+
     return None
 
 # Turns of prior conversation kept. Enough for a thread of follow-ups without
