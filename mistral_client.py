@@ -19,6 +19,11 @@ MAX_BATCH_ITEMS = 16
 MAX_BATCH_CHARS = 20000
 MAX_ITEM_CHARS = 28000
 
+# Indexing the whole corpus is a burst of back-to-back embedding calls, which
+# trips the free tier's rate limit. A short pause between batches costs a few
+# seconds on a cold build and avoids the retry storm entirely.
+EMBED_BATCH_DELAY = float(os.environ.get("MISTRAL_EMBED_DELAY", "0.4"))
+
 _client: Optional[Mistral] = None
 
 
@@ -35,18 +40,29 @@ def get_client() -> Mistral:
     return _client
 
 
-def _with_retries(fn, *, attempts: int = 4, what: str = "Mistral call"):
-    """Retry on rate limits / transient errors with exponential backoff."""
-    delay = 1.0
+def _is_rate_limit(error: Exception) -> bool:
+    text = str(error)
+    return "429" in text or "rate limit" in text.lower() or "capacity" in text.lower()
+
+
+def _with_retries(fn, *, attempts: int = 6, what: str = "Mistral call"):
+    """Retry on rate limits and transient errors with exponential backoff.
+
+    Rate limits back off harder than other errors: the free tier needs seconds,
+    not milliseconds, and a tight retry loop just burns the remaining quota.
+    """
+    delay = 2.0
     for attempt in range(1, attempts + 1):
         try:
             return fn()
         except Exception as e:
             if attempt == attempts:
                 raise
-            logger.warning("%s failed (attempt %d/%d): %s", what, attempt, attempts, e)
-            time.sleep(delay)
-            delay *= 2
+            wait = delay * (2.5 if _is_rate_limit(e) else 1.0)
+            logger.warning("%s failed (attempt %d/%d), retrying in %.0fs: %s",
+                           what, attempt, attempts, wait, e)
+            time.sleep(wait)
+            delay = min(delay * 2, 30.0)
 
 
 def _batch(texts: List[str]) -> List[List[str]]:
@@ -77,7 +93,10 @@ class MistralEmbedding:
         cleaned = [(t or "").strip()[:MAX_ITEM_CHARS] or " " for t in input]
         embeddings: List[List[float]] = []
 
-        for batch in _batch(cleaned):
+        batches = _batch(cleaned)
+        for i, batch in enumerate(batches):
+            if i:
+                time.sleep(EMBED_BATCH_DELAY)
             response = _with_retries(
                 lambda b=batch: get_client().embeddings.create(
                     model=EMBED_MODEL, inputs=b

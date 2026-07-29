@@ -54,18 +54,65 @@ def discover_patch_urls() -> List[str]:
     return sorted(f"{BASE}{p.rstrip('/')}/" for p in paths)
 
 
-def patch_number(url: str, title: str) -> Optional[float]:
-    """Version number for an article, preferring the URL slug over the title.
+def patch_key(url: str, title: str) -> Optional[str]:
+    """Version string for an article, preferring the URL slug over the title.
 
-    Titles are not reliable: the 2023 April Fools article is titled
-    "VALORANT Patch Notes 2004", which yields a version of 2004.0.
+    Kept as a string so the digits survive: 10.00 and 10.0 are different
+    articles but collapse to the same float. Titles alone are not reliable
+    either -- the 2023 April Fools article is titled "VALORANT Patch Notes
+    2004", which would read as version 2004.
     """
     m = SLUG_VERSION.search(url)
     if m:
-        return float(f"{int(m.group(1))}.{m.group(2)}")
+        return f"{int(m.group(1))}.{m.group(2)}"
 
     m = TITLE_VERSION.search(title)
-    return float(m.group(1)) if m else None
+    return m.group(1) if m else None
+
+
+def patch_number(url: str, title: str) -> Optional[float]:
+    key = patch_key(url, title)
+    try:
+        return float(key) if key else None
+    except ValueError:
+        return None
+
+
+# Riot marks section names with h1, the same tag as the article title, and uses
+# h2 for the platform qualifier under each section.
+HEADING_TAGS = ("h1", "h2", "h3", "h4")
+BLOCK_TAGS = HEADING_TAGS + ("p", "li")
+FURNITURE = {"related articles", "related news", "recent news"}
+
+
+def extract_blocks(body, title: str = "") -> str:
+    """Flatten an article body to text, keeping headings and avoiding repeats.
+
+    Headings are marked with a leading '## ' so the chunker can split on
+    sections. Elements nested inside an already-emitted block are skipped: a
+    <p> inside an <li> would otherwise contribute its text twice, once as part
+    of the list item and once on its own, which had been doubling the size of
+    the corpus.
+    """
+    emitted = set()
+    lines = []
+
+    for el in body.find_all(BLOCK_TAGS):
+        if any(id(parent) in emitted for parent in el.parents):
+            continue
+
+        text = el.get_text(" ", strip=True)
+        if not text:
+            continue
+
+        is_heading = el.name in HEADING_TAGS
+        if is_heading and (text.strip().lower() in FURNITURE or text.strip() == title.strip()):
+            continue
+
+        emitted.add(id(el))
+        lines.append(f"## {text}" if is_heading else text)
+
+    return "\n".join(lines).strip()
 
 
 def parse_article(url: str) -> Optional[Dict]:
@@ -93,8 +140,7 @@ def parse_article(url: str) -> Optional[Dict]:
         or soup.select_one("article")
         or soup
     )
-    blocks = [el.get_text(" ", strip=True) for el in body.find_all(["p", "li"])]
-    content = "\n".join(b for b in blocks if b).strip()
+    content = extract_blocks(body, title)
 
     if not title or not content:
         return None
@@ -122,9 +168,11 @@ def to_record(raw: Dict) -> Dict:
     written by the previous scraper (which stored it as a string, taken from the
     title) come out consistent with newly fetched ones.
     """
+    url, title = raw.get("url", ""), raw.get("title", "")
     return {
-        "title": raw["title"],
-        "patch": patch_number(raw.get("url", ""), raw.get("title", "")),
+        "title": title,
+        "patch": patch_number(url, title),
+        "patch_key": patch_key(url, title),
         "published": normalize_date(raw.get("published", "")),
         "final_content": raw["content"],
     }

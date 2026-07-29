@@ -7,6 +7,9 @@ from datetime import datetime
 import uuid
 import logging
 
+import hashlib
+
+import retrieval
 from mistral_client import CHAT_MODEL, MistralEmbedding, chat as mistral_chat
 from prompts import build_system_prompt, build_user_prompt, describe_corpus
 
@@ -20,15 +23,23 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 # Configuration
 COLLECTION_NAME = "valorant_patches"
 PATCH_NOTES_FILE = "feedme_patchnotes.json"
+# Persist the index so a restart does not re-embed the whole corpus. Set
+# CHROMA_PATH empty to force the in-memory client.
+CHROMA_PATH = os.environ.get("CHROMA_PATH", "chroma_db")
 
 def setup_chromadb():
     try:
-        client = chromadb.Client()
+        if CHROMA_PATH:
+            client = chromadb.PersistentClient(path=CHROMA_PATH)
+            logger.info(f"ChromaDB persisting to {CHROMA_PATH}")
+        else:
+            client = chromadb.Client()
+            logger.info("ChromaDB running in memory")
+
         collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
             embedding_function=MistralEmbedding()
         )
-        logger.info("ChromaDB setup successful")
         return client, collection
     except Exception as e:
         logger.error(f"Error setting up ChromaDB: {e}")
@@ -39,6 +50,21 @@ latest_patch = None
 oldest_patch = None
 client = None
 collection = None
+patch_keys = []
+
+
+def corpus_fingerprint(dataset: List[Dict[str, Any]]) -> str:
+    """Identity of the indexed corpus, so a stale index gets rebuilt.
+
+    Covers the chunking parameters as well as the data: changing how notes are
+    split has to invalidate an index built under the old scheme.
+    """
+    h = hashlib.sha256()
+    h.update(f"v2:{retrieval.CHUNK_MAX_CHARS}:{retrieval.CHUNK_MIN_CHARS}".encode())
+    for record in dataset:
+        h.update((record.get("title") or "").encode("utf-8"))
+        h.update(str(len(record.get("final_content") or "")).encode())
+    return h.hexdigest()[:16]
 
 def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
     global dataset, latest_patch, oldest_patch
@@ -75,34 +101,12 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
         return False
     
     try:
-        documents = []
-        metadatas = []
-        ids = []
-        
-        for i, doc in enumerate(dataset):
-            content = doc.get("final_content") or ""
-            patch_number = doc.get("patch")
-            title = doc.get("title") or f"Patch {patch_number}"
-
-            if content.strip():
-                documents.append(content)
-                metadata = {
-                    "source": "valorant_patch_notes",
-                    "title": title,
-                    "published": doc.get("published") or "",
-                    "index": i,
-                }
-                # Chroma rejects None metadata values, and the April Fools
-                # articles carry no parsable version number.
-                if patch_number is not None:
-                    metadata["patch"] = patch_number
-                metadatas.append(metadata)
-                ids.append(f"patch_{patch_number if patch_number is not None else 'na'}_{i}")
+        documents, metadatas, ids = retrieval.build_chunks(dataset)
 
         if not documents:
             logger.warning("No valid documents found to add")
             return False
-        
+
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             end_idx = min(i + batch_size, len(documents))
@@ -111,8 +115,8 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
                 metadatas=metadatas[i:end_idx],
                 ids=ids[i:end_idx]
             )
-        
-        logger.info(f"Successfully added {len(documents)} patch notes to ChromaDB collection!")
+
+        logger.info(f"Indexed {len(documents)} chunks from {len(dataset)} patch notes")
         return True
     except Exception as e:
         logger.error(f"Error adding documents to collection: {e}")
@@ -141,36 +145,21 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
         if validation_error:
             return f"Error: {validation_error}"
         
-        results = collection.query(
-            query_texts=[prompt],
-            n_results=k
+        result = retrieval.search(
+            collection,
+            prompt,
+            known_keys=patch_keys,
+            latest_key=(latest_patch or {}).get("patch_key"),
+            k=k,
         )
-        
-        if not results['documents'] or not results['documents'][0]:
-            context = "No relevant patch notes found for your query."
-            retrieved_docs = []
-            retrieved_metadata = []
-        else:
-            retrieved_docs = results['documents'][0]
-            retrieved_metadata = results['metadatas'][0] if results['metadatas'] else []
+        rows = result["rows"]
+        context = retrieval.format_context(rows)
 
-        latest_title = latest_patch.get("title", "N/A") if latest_patch else "N/A"
-        latest_date = latest_patch.get("published", "N/A") if latest_patch else "N/A"
-
-        enhanced_context_parts = []
-        for i, doc in enumerate(retrieved_docs):
-            metadata = retrieved_metadata[i] if i < len(retrieved_metadata) else {}
-            patch_title = metadata.get('title', 'Unknown Patch')
-            patch_date = metadata.get('published', 'Unknown Date')
-            
-            enhanced_context_parts.append(f"[PATCH: {patch_title} - Published: {patch_date}]\n{doc}")
-
-        if latest_patch:
-            latest_content = latest_patch.get("final_content", "")
-            if latest_content and latest_content not in retrieved_docs:
-                enhanced_context_parts.insert(0, f"[LATEST PATCH: {latest_title} - Published: {latest_date}]\n{latest_content}")
-
-        context = "\n\n---\n\n".join(enhanced_context_parts) if enhanced_context_parts else "No relevant patch notes found."
+        sources = retrieval.cited_sources(rows)
+        logger.info(
+            f"retrieval mode={result['mode']} chunks={len(rows)} "
+            f"patches={[s['title'] for s in sources][:4]}"
+        )
 
         corpus = describe_corpus(dataset)
         system_prompt = build_system_prompt(corpus)
@@ -183,28 +172,47 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
         return "Sorry, I'm having trouble processing your request right now. Try asking again in a moment!"
 
 def initialize_system():
-    global client, collection
-    
+    global client, collection, patch_keys
+
     logger.info("Initializing Valorant Patch Notes RAG System...")
-    
+
     client, collection = setup_chromadb()
     if not collection:
         logger.error("Failed to setup ChromaDB.")
         return False
-    
+
     dataset_sorted = load_patch_notes(PATCH_NOTES_FILE)
     if not dataset_sorted:
         logger.error("No patch notes loaded.")
         return False
-    
-    if collection.count() == 0:
-        logger.info("Collection is empty. Adding patch notes...")
-        if not add_documents_to_collection(collection, dataset_sorted):
-            logger.error("Failed to add documents.")
-            return False
-    else:
-        logger.info(f"Collection already contains {collection.count()} documents")
-    
+
+    patch_keys = [r["patch_key"] for r in dataset_sorted if r.get("patch_key")]
+
+    fingerprint = corpus_fingerprint(dataset_sorted)
+    indexed = (collection.metadata or {}).get("fingerprint")
+
+    if collection.count() > 0 and indexed == fingerprint:
+        logger.info(f"Reusing index of {collection.count()} chunks ({fingerprint})")
+        logger.info("System initialization complete!")
+        return True
+
+    if collection.count() > 0 or indexed:
+        logger.info(f"Index is stale or incomplete ({indexed} != {fingerprint}); rebuilding")
+        client.delete_collection(COLLECTION_NAME)
+        collection = client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            embedding_function=MistralEmbedding(),
+        )
+
+    if not add_documents_to_collection(collection, dataset_sorted):
+        logger.error("Failed to add documents; index left unstamped so the next "
+                     "start rebuilds it rather than trusting a partial index.")
+        return False
+
+    # Stamped only after a complete build. A run that dies partway through
+    # leaves no fingerprint, so the next start rebuilds instead of serving
+    # an index that is silently missing chunks.
+    collection.modify(metadata={"fingerprint": fingerprint})
     logger.info("System initialization complete!")
     return True
 
