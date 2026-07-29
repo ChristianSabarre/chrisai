@@ -1,120 +1,144 @@
-# file: scrape_valorant_patch_notes_checkpoint.py
-import asyncio
+"""Scrape VALORANT patch notes into the JSON file the app loads.
+
+The archive page embeds its full result set in the Next.js __NEXT_DATA__ payload,
+so the whole catalogue is reachable with plain HTTP requests. An earlier version
+drove a headless browser to click through "Show More" pagination, which stopped
+partway and left the corpus missing every patch before 5.01.
+
+Usage:
+    python scrape.py            # fetch anything missing, refresh the JSON
+    python scrape.py --refresh  # re-fetch every article, ignoring the checkpoint
+"""
+
+import argparse
 import json
 import re
+import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from tqdm import tqdm
-
-from playwright.async_api import async_playwright
 
 BASE = "https://playvalorant.com"
-ARCHIVE_PATH = "/{locale}/news/tags/patch-notes/"
 LOCALE = "en-us"
-ARCHIVE_URL = f"{BASE}{ARCHIVE_PATH.format(locale=LOCALE)}"
+ARCHIVE_URL = f"{BASE}/{LOCALE}/news/tags/patch-notes/"
 
 CHECKPOINT = Path("valorant_patch_notes_checkpoint.jsonl")
-OUT_CSV = Path("valorant_patch_notes.csv")
+OUT_JSON = Path("feedme_patchnotes.json")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; ValorantPatchScraper/1.2)"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ValorantPatchScraper/2.0)"}
+REQUEST_DELAY = 0.6
 
-def extract_patch_number(title: str) -> Optional[str]:
-    m = re.search(r'(\b(?:v)?\d+(?:\.\d+){0,2}\b)', title, flags=re.IGNORECASE)
-    return m.group(1) if m else None
+ARTICLE_PATH = re.compile(
+    rf"/{LOCALE}/news/game-updates/[a-z0-9\-]*patch-notes[a-z0-9\-]*"
+)
+SLUG_VERSION = re.compile(r"patch-notes-(\d+)-(\d+)")
+TITLE_VERSION = re.compile(r"(\d+\.\d+)")
 
-def parse_article(url: str) -> Dict:
-    r = requests.get(url, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
 
-    # Title
+def discover_patch_urls() -> List[str]:
+    """Pull every patch-note article path out of the archive's Next.js payload."""
+    html = requests.get(ARCHIVE_URL, headers=HEADERS, timeout=30).text
+
+    blob = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not blob:
+        raise RuntimeError(
+            "No __NEXT_DATA__ block on the archive page. The site layout changed; "
+            "the discovery step needs updating."
+        )
+
+    paths = set(ARTICLE_PATH.findall(blob.group(1)))
+    paths |= set(ARTICLE_PATH.findall(html))
+    return sorted(f"{BASE}{p.rstrip('/')}/" for p in paths)
+
+
+def patch_number(url: str, title: str) -> Optional[float]:
+    """Version number for an article, preferring the URL slug over the title.
+
+    Titles are not reliable: the 2023 April Fools article is titled
+    "VALORANT Patch Notes 2004", which yields a version of 2004.0.
+    """
+    m = SLUG_VERSION.search(url)
+    if m:
+        return float(f"{int(m.group(1))}.{m.group(2)}")
+
+    m = TITLE_VERSION.search(title)
+    return float(m.group(1)) if m else None
+
+
+def parse_article(url: str) -> Optional[Dict]:
+    response = requests.get(url, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+
     title_el = soup.find("h1")
     title = title_el.get_text(strip=True) if title_el else ""
 
-    # Published date
-    date_text = ""
+    published = ""
     time_el = soup.find("time")
     if time_el and time_el.get("datetime"):
-        date_text = time_el["datetime"]
+        published = time_el["datetime"]
     elif time_el:
-        date_text = time_el.get_text(strip=True)
+        published = time_el.get_text(strip=True)
     else:
-        meta_date = soup.find("meta", {"property": "article:published_time"})
-        if meta_date and meta_date.get("content"):
-            date_text = meta_date["content"]
+        meta = soup.find("meta", {"property": "article:published_time"})
+        if meta and meta.get("content"):
+            published = meta["content"]
 
-    # Article body
-    paragraphs = []
     body = (
-        soup.select_one("div[itemprop='articleBody']") or
-        soup.select_one("div.nexus-article") or
-        soup.select_one("article")
+        soup.select_one("div[itemprop='articleBody']")
+        or soup.select_one("div.nexus-article")
+        or soup.select_one("article")
+        or soup
     )
-    if body:
-        for p in body.find_all(["p", "li"]):
-            text = p.get_text(" ", strip=True)
-            if text:
-                paragraphs.append(text)
-    else:
-        for p in soup.find_all("p"):
-            text = p.get_text(" ", strip=True)
-            if text:
-                paragraphs.append(text)
+    blocks = [el.get_text(" ", strip=True) for el in body.find_all(["p", "li"])]
+    content = "\n".join(b for b in blocks if b).strip()
 
-    content = "\n".join(paragraphs).strip()
+    if not title or not content:
+        return None
 
     return {
         "title": title,
         "url": url,
-        "published": date_text,
-        "patch_number": extract_patch_number(title) or "",
-        "content": content
+        "published": published,
+        "patch_number": patch_number(url, title),
+        "content": content,
     }
 
-async def collect_archive_links() -> List[str]:
-    links = set()
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent=HEADERS["User-Agent"])
-        page = await context.new_page()
-        await page.goto(ARCHIVE_URL, wait_until="domcontentloaded")
 
-        # Keep clicking "Show More" until it's gone
-        while True:
-            try:
-                button = page.locator("button:has-text('Show More')")
-                if await button.is_visible():
-                    await button.click()
-                    await page.wait_for_timeout(1200)  # wait for load
-                else:
-                    break
-            except Exception:
-                break
+def normalize_date(raw: str) -> str:
+    """Reduce an ISO timestamp to a plain date, which is what the app expects."""
+    if not raw:
+        return ""
+    return raw[:10] if re.match(r"\d{4}-\d{2}-\d{2}", raw) else raw
 
-        # Collect all article links
-        anchors = await page.locator("a[href*='/news/game-updates/']").all()
-        for a in anchors:
-            href = await a.get_attribute("href")
-            if href:
-                if href.startswith("/"):
-                    links.add(BASE + href)
-                elif href.startswith(BASE):
-                    links.add(href)
 
-        await browser.close()
+def to_record(raw: Dict) -> Dict:
+    """Convert a scraped article into the shape the app loads.
 
-    print(f"Raw links found: {len(links)}")
-    patch_links = [l for l in links if "patch-notes" in l.lower()]
-    print(f"Patch note links: {len(patch_links)}")
+    The version is recomputed rather than read from the checkpoint, so entries
+    written by the previous scraper (which stored it as a string, taken from the
+    title) come out consistent with newly fetched ones.
+    """
+    return {
+        "title": raw["title"],
+        "patch": patch_number(raw.get("url", ""), raw.get("title", "")),
+        "published": normalize_date(raw.get("published", "")),
+        "final_content": raw["content"],
+    }
 
-    return sorted(set(patch_links))
+
+def url_key(url: str) -> str:
+    """Identity of an article, ignoring the trailing slash.
+
+    The previous scraper stored URLs without a trailing slash and discovery now
+    emits them with one, so keying on the raw string counted the same article
+    twice and duplicated it in the corpus.
+    """
+    return url.rstrip("/")
+
 
 def load_checkpoint() -> Dict[str, Dict]:
     scraped = {}
@@ -123,45 +147,77 @@ def load_checkpoint() -> Dict[str, Dict]:
             for line in f:
                 try:
                     obj = json.loads(line)
-                    scraped[obj["url"]] = obj
-                except Exception:
+                except json.JSONDecodeError:
                     continue
+                if obj.get("url"):
+                    scraped[url_key(obj["url"])] = obj
     return scraped
 
-def append_checkpoint(item: Dict):
+
+def append_checkpoint(item: Dict) -> None:
     with CHECKPOINT.open("a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-def main():
-    print(f"[1/3] Collecting patch links from: {ARCHIVE_URL}")
-    loop = asyncio.get_event_loop()
-    all_links = loop.run_until_complete(collect_archive_links())
 
-    print(f"Found {len(all_links)} patch links")
+def rewrite_checkpoint(scraped: Dict[str, Dict]) -> None:
+    """Collapse the append-only log back to one row per article."""
+    with CHECKPOINT.open("w", encoding="utf-8") as f:
+        for item in scraped.values():
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-    scraped = load_checkpoint()
-    print(f"[checkpoint] Already have {len(scraped)} scraped patches")
 
-    results = list(scraped.values())
-    seen = set(scraped.keys())
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refresh", action="store_true",
+                        help="re-fetch every article instead of resuming")
+    args = parser.parse_args()
 
-    print("[2/3] Fetching new patch pages…")
-    for url in tqdm(sorted(set(all_links))):
-        if url in seen:
-            continue
+    print(f"Discovering patch notes from {ARCHIVE_URL}")
+    urls = discover_patch_urls()
+    print(f"  found {len(urls)} articles")
+
+    scraped = {} if args.refresh else load_checkpoint()
+    print(f"  {len(scraped)} already in checkpoint")
+
+    todo = [u for u in urls if url_key(u) not in scraped]
+    print(f"  {len(todo)} to fetch\n")
+
+    failures = []
+    for i, url in enumerate(todo, 1):
         try:
             item = parse_article(url)
-            if item["title"] and item["content"]:
+            if item:
                 append_checkpoint(item)
-                results.append(item)
-            seen.add(url)
-            time.sleep(0.6)
+                scraped[url_key(url)] = item
+                print(f"  [{i}/{len(todo)}] {item['title']}")
+            else:
+                failures.append((url, "no title or body"))
+                print(f"  [{i}/{len(todo)}] SKIP (empty) {url}")
         except Exception as e:
-            print(f"Error parsing {url}: {e}")
+            failures.append((url, str(e)))
+            print(f"  [{i}/{len(todo)}] FAIL {url}: {e}")
+        time.sleep(REQUEST_DELAY)
 
-    print(f"[3/3] Saving {len(results)} patch notes to CSV…")
-    pd.DataFrame(results).to_csv(OUT_CSV, index=False)
-    print(f"Done.\n- Checkpoint JSONL: {CHECKPOINT.resolve()}\n- CSV:   {OUT_CSV.resolve()}")
+    rewrite_checkpoint(scraped)
+
+    records = [to_record(v) for v in scraped.values()]
+    records = [r for r in records if r["final_content"]]
+    records.sort(key=lambda r: r["published"])
+
+    OUT_JSON.write_text(
+        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    print(f"\nWrote {len(records)} patch notes to {OUT_JSON}")
+    if records:
+        print(f"  range: {records[0]['published']} ({records[0]['title']}) "
+              f"to {records[-1]['published']} ({records[-1]['title']})")
+    if failures:
+        print(f"\n{len(failures)} failures:")
+        for url, err in failures[:10]:
+            print(f"  {url}: {err}")
+    return 1 if failures and not records else 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

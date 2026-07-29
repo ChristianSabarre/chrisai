@@ -80,20 +80,24 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
         ids = []
         
         for i, doc in enumerate(dataset):
-            content = doc.get("final_content", "")
-            patch_number = doc.get("patch", f"patch_{i}")
-            title = doc.get("title", f"Patch {patch_number}")
-            
-            if content.strip(): 
+            content = doc.get("final_content") or ""
+            patch_number = doc.get("patch")
+            title = doc.get("title") or f"Patch {patch_number}"
+
+            if content.strip():
                 documents.append(content)
-                metadatas.append({
+                metadata = {
                     "source": "valorant_patch_notes",
-                    "patch": patch_number,
                     "title": title,
-                    "published": doc.get("published", ""),
-                    "index": i
-                })
-                ids.append(f"patch_{patch_number}_{i}")
+                    "published": doc.get("published") or "",
+                    "index": i,
+                }
+                # Chroma rejects None metadata values, and the April Fools
+                # articles carry no parsable version number.
+                if patch_number is not None:
+                    metadata["patch"] = patch_number
+                metadatas.append(metadata)
+                ids.append(f"patch_{patch_number if patch_number is not None else 'na'}_{i}")
 
         if not documents:
             logger.warning("No valid documents found to add")
