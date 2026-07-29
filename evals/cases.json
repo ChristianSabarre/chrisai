@@ -1,0 +1,170 @@
+[
+  {
+    "id": "exact-1000",
+    "category": "exact_patch",
+    "question": "What changed in patch 10.00?",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["10.00"],
+    "answer_should_mention": ["tejo"]
+  },
+  {
+    "id": "exact-1302",
+    "category": "exact_patch",
+    "question": "What changed in patch 13.02?",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["13.02"],
+    "answer_should_mention": ["phoenix"]
+  },
+  {
+    "id": "exact-1100",
+    "category": "exact_patch",
+    "question": "Tell me about patch 11.00",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["11.00"],
+    "answer_should_mention": ["corrode"]
+  },
+  {
+    "id": "exact-800",
+    "category": "exact_patch",
+    "question": "What was in patch 8.0?",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["8.0"],
+    "answer_should_mention": ["outlaw"]
+  },
+  {
+    "id": "exact-loose-form",
+    "category": "exact_patch",
+    "question": "patch 10.0 changes please",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["10.00"]
+  },
+  {
+    "id": "exact-1300",
+    "category": "exact_patch",
+    "question": "Summarise VALORANT patch 13.00",
+    "expect_mode": "patch_lookup",
+    "expect_patches": ["13.00"]
+  },
+
+  {
+    "id": "debut-tejo",
+    "category": "feature_debut",
+    "question": "Which patch added the agent Tejo?",
+    "expect_mode": "semantic",
+    "expect_patches": ["10.00"],
+    "answer_should_mention": ["10.00"]
+  },
+  {
+    "id": "debut-waylay",
+    "category": "feature_debut",
+    "question": "When was Waylay released?",
+    "expect_mode": "semantic",
+    "expect_patches": ["10.04"]
+  },
+  {
+    "id": "debut-outlaw",
+    "category": "feature_debut",
+    "question": "When was the Outlaw sniper added?",
+    "expect_mode": "semantic",
+    "expect_patches": ["8.0"]
+  },
+  {
+    "id": "debut-corrode",
+    "category": "feature_debut",
+    "question": "Tell me about the map Corrode",
+    "expect_mode": "semantic",
+    "expect_patches": ["11.00", "11.01", "11.02", "11.04", "12.08"]
+  },
+  {
+    "id": "debut-summit",
+    "category": "feature_debut",
+    "question": "What do you know about the Summit map?",
+    "expect_mode": "semantic",
+    "expect_patches": ["13.00", "13.01", "13.02"]
+  },
+
+  {
+    "id": "agent-jett",
+    "category": "agent_history",
+    "question": "Has Jett been nerfed?",
+    "expect_mode": "semantic",
+    "expect_any_patch": true,
+    "answer_should_mention": ["jett"]
+  },
+  {
+    "id": "agent-neon",
+    "category": "agent_history",
+    "question": "What changes has Neon had?",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+  {
+    "id": "agent-chamber",
+    "category": "agent_history",
+    "question": "Was Chamber ever nerfed?",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+  {
+    "id": "agent-clove",
+    "category": "agent_history",
+    "question": "Tell me about Clove changes",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+  {
+    "id": "weapon-vandal",
+    "category": "agent_history",
+    "question": "Any Vandal or Phantom balance changes?",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+  {
+    "id": "weapon-shotgun",
+    "category": "agent_history",
+    "question": "Were shotguns ever nerfed?",
+    "expect_mode": "semantic",
+    "expect_any_patch": true
+  },
+
+  {
+    "id": "latest-1",
+    "category": "latest",
+    "question": "What is the latest patch?",
+    "expect_mode": "latest_lookup",
+    "expect_patches": ["13.02"],
+    "answer_should_mention": ["13.02"]
+  },
+  {
+    "id": "latest-2",
+    "category": "latest",
+    "question": "What changed in the most recent patch?",
+    "expect_mode": "latest_lookup",
+    "expect_patches": ["13.02"]
+  },
+
+  {
+    "id": "absent-2500",
+    "category": "not_in_data",
+    "question": "What changed in patch 25.00?",
+    "should_refuse": true
+  },
+  {
+    "id": "absent-9900",
+    "category": "not_in_data",
+    "question": "Summarise patch 99.01 for me",
+    "should_refuse": true
+  },
+  {
+    "id": "absent-agent",
+    "category": "not_in_data",
+    "question": "What changes were made to the agent Bartholomew?",
+    "should_refuse": true
+  },
+  {
+    "id": "absent-game",
+    "category": "not_in_data",
+    "question": "What changed in the latest Counter-Strike update?",
+    "should_refuse": true
+  }
+]
