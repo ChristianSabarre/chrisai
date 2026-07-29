@@ -45,6 +45,18 @@ def _is_rate_limit(error: Exception) -> bool:
     return "429" in text or "rate limit" in text.lower() or "capacity" in text.lower()
 
 
+def _is_permanent(error: Exception) -> bool:
+    """Errors no amount of retrying will fix.
+
+    A missing key or a rejected one fails identically on every attempt, so
+    retrying only turns an instant, legible error into a long stall.
+    """
+    if isinstance(error, RuntimeError):  # missing configuration
+        return True
+    text = str(error)
+    return any(s in text for s in ("401", "403", "Unauthorized", "invalid_api_key"))
+
+
 def _with_retries(fn, *, attempts: int = 6, what: str = "Mistral call"):
     """Retry on rate limits and transient errors with exponential backoff.
 
@@ -56,7 +68,7 @@ def _with_retries(fn, *, attempts: int = 6, what: str = "Mistral call"):
         try:
             return fn()
         except Exception as e:
-            if attempt == attempts:
+            if attempt == attempts or _is_permanent(e):
                 raise
             wait = delay * (2.5 if _is_rate_limit(e) else 1.0)
             logger.warning("%s failed (attempt %d/%d), retrying in %.0fs: %s",
