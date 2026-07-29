@@ -1,41 +1,19 @@
-import google.generativeai as genai
 import chromadb
 import json
 import os
 from typing import List, Dict, Any
 
-API_KEY = "AIzaSyDBKFb-gfTHYgX9CR_55VtJnO6Vm3xTjXc" 
+from mistral_client import MistralEmbedding, chat as mistral_chat
+
 COLLECTION_NAME = "valorant_patches"
 PATCH_NOTES_FILE = "feedme_patchnotes.json"
-
-genai.configure(api_key=API_KEY)
-
-class GeminiEmbedding:
-    def __call__(self, input: List[str]) -> List[List[float]]:
-        embeddings = []
-        for text in input:
-            try:
-                result = genai.embed_content(
-                    model="models/text-embedding-004",  
-                    content=text,
-                    task_type="retrieval_document"
-                )
-                embeddings.append(result['embedding'])
-            except Exception as e:
-                print(f"Error generating embedding for text: {e}")
-               
-                embeddings.append([0.0] * 768)  
-        return embeddings
-
-    def name(self) -> str:
-        return "gemini-embedding"
 
 def setup_chromadb():
     try:
         client = chromadb.Client()
         collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
-            embedding_function=GeminiEmbedding()
+            embedding_function=MistralEmbedding()
         )
         return client, collection
     except Exception as e:
@@ -111,12 +89,7 @@ def chat_chris(prompt: str, collection, k: int = 3) -> str:
             context = "\n\n".join(retrieved_docs)
         
         
-        full_prompt = f"""You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
-
-Context from Valorant Patch Notes:
-{context}
-
-User Question: {prompt}
+        system_prompt = """You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
 
 Respond like you're just talking to a friend about the game:
 
@@ -135,13 +108,14 @@ Keep it natural:
 
 If you don't have good info, just say something like "Hmm, I don't see any recent Killjoy changes in what I've got. Want to ask about a specific patch or another agent?
 """
-        
-        
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        response = model.generate_content(full_prompt)
-        
-        return response.text
-        
+
+        user_prompt = f"""Context from Valorant Patch Notes:
+{context}
+
+User Question: {prompt}"""
+
+        return mistral_chat(system_prompt, user_prompt)
+
     except Exception as e:
         return f"Error generating response: {e}"
 

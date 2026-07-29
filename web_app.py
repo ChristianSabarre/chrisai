@@ -1,5 +1,4 @@
 from flask import Flask, render_template, request, jsonify
-import google.generativeai as genai
 import chromadb
 import json
 import os
@@ -8,46 +7,25 @@ from datetime import datetime
 import uuid
 import logging
 
+from mistral_client import CHAT_MODEL, MistralEmbedding, chat as mistral_chat
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')  
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 
 # Configuration
-API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyDBKFb-gfTHYgX9CR_55VtJnO6Vm3xTjXc")  
 COLLECTION_NAME = "valorant_patches"
 PATCH_NOTES_FILE = "feedme_patchnotes.json"
-EMBEDDING_DIMENSION = 768
-
-genai.configure(api_key=API_KEY)
-
-class GeminiEmbedding:
-    def __call__(self, input: List[str]) -> List[List[float]]:
-        embeddings = []
-        for text in input:
-            try:
-                result = genai.embed_content(
-                    model="models/text-embedding-004",  
-                    content=text,
-                    task_type="retrieval_document"
-                )
-                embeddings.append(result['embedding'])
-            except Exception as e:
-                logger.error(f"Error generating embedding for text: {e}")
-                embeddings.append([0.0] * EMBEDDING_DIMENSION)  
-        return embeddings
-
-    def name(self) -> str:
-        return "gemini-embedding"
 
 def setup_chromadb():
     try:
         client = chromadb.Client()
         collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
-            embedding_function=GeminiEmbedding()
+            embedding_function=MistralEmbedding()
         )
         logger.info("ChromaDB setup successful")
         return client, collection
@@ -213,18 +191,13 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
 
         latest_recency = calculate_recency(latest_date) if latest_date != "N/A" else "unknown"
 
-        full_prompt = f"""You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
+        system_prompt = f"""You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
 
 IMPORTANT TEMPORAL CONTEXT:
 - Current date: {current_date}
 - Latest patch: {latest_title} (published {latest_date}) - This is {latest_recency}
 - Oldest patch: {oldest_title} (published {oldest_date})
 - Your data spans from {oldest_date} to {latest_date}
-
-Context from Valorant Patch Notes:
-{context}
-
-User Question: {prompt}
 
 CRITICAL INSTRUCTIONS FOR TEMPORAL AWARENESS:
 - When users ask about "recent" changes, they mean patches from 2024-2025
@@ -276,12 +249,14 @@ Keep it natural:
 
 If you don't have good recent info, say something like "Hmm, I don't see any recent changes for that. The last time they touched it was back in [year]. Want to ask about something else or a specific patch?"
 """
-        
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        response = model.generate_content(full_prompt)
-        
-        return response.text
-        
+
+        user_prompt = f"""Context from Valorant Patch Notes:
+{context}
+
+User Question: {prompt}"""
+
+        return mistral_chat(system_prompt, user_prompt)
+
     except Exception as e:
         logger.error(f"Error generating response: {e}")
         return "Sorry, I'm having trouble processing your request right now. Try asking again in a moment!"

@@ -1,6 +1,6 @@
 beautifulsoup4==4.13.5
 chromadb==1.0.20
-google-generativeai==0.8.5
+mistralai==2.8.0
 pandas==2.3.2
 playwright==1.55.0
 requests==2.32.5
