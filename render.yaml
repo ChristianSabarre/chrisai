@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: chrisai
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # Single worker: the vector index is built in memory at startup, so each
+    # extra worker would re-embed the whole corpus. Extended timeout covers
+    # the embedding pass during boot.
+    startCommand: gunicorn web_app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    envVars:
+      - key: MISTRAL_API_KEY
+        sync: false
