@@ -654,6 +654,16 @@
 
             inner.insertBefore(row, typing);
             scrollToEnd();
+
+            // Handle so a streamed reply can grow in place after being created.
+            return {
+                append: function (piece) {
+                    body.textContent += piece;
+                    scrollToEnd();
+                },
+                text: function () { return body.textContent; },
+                remove: function () { row.remove(); }
+            };
         }
 
         function showError(text) {
@@ -675,21 +685,94 @@
             if (busy) scrollToEnd();
         }
 
+        // Non-streaming path, used if the stream cannot be opened.
+        async function askBuffered(message) {
+            const res = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                showError(data.error || 'Something went wrong handling that message.');
+                return;
+            }
+            addMessage(data.bot_message.message, 'bot', data.bot_message.sources);
+        }
+
         async function ask(message) {
+            let res;
             try {
-                const res = await fetch('/chat', {
+                res = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: message })
                 });
-                const data = await res.json();
-                if (res.ok) {
-                    addMessage(data.bot_message.message, 'bot', data.bot_message.sources);
-                } else {
-                    showError(data.error || 'Something went wrong handling that message.');
-                }
             } catch (err) {
                 showError('Network error. Check your connection and try again.');
+                return;
+            }
+
+            if (!res.ok) {
+                let detail = 'Something went wrong handling that message.';
+                try {
+                    const data = await res.json();
+                    detail = data.error || detail;
+                } catch (err) { /* non-JSON error body */ }
+                showError(detail);
+                return;
+            }
+
+            if (!res.body) {
+                await askBuffered(message);
+                return;
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let pending = '';
+            let handle = null;
+            let failed = false;
+
+            function onEvent(payload) {
+                if (payload.type === 'sources') {
+                    handle = addMessage('', 'bot', payload.sources);
+                    setBusy(false);
+                } else if (payload.type === 'delta' && handle) {
+                    handle.append(payload.text);
+                } else if (payload.type === 'error') {
+                    failed = true;
+                    if (handle && !handle.text()) {
+                        handle.remove();
+                        handle = null;
+                    }
+                    showError(payload.message);
+                }
+            }
+
+            while (true) {
+                const step = await reader.read();
+                if (step.done) break;
+
+                pending += decoder.decode(step.value, { stream: true });
+                const frames = pending.split('\n\n');
+                pending = frames.pop();
+
+                frames.forEach(function (frame) {
+                    const line = frame.split('\n').find(function (l) {
+                        return l.indexOf('data: ') === 0;
+                    });
+                    if (!line) return;
+                    try {
+                        onEvent(JSON.parse(line.slice(6)));
+                    } catch (err) { /* skip malformed frame */ }
+                });
+            }
+
+            // A stream that opened but produced nothing is worth reporting.
+            if (handle && !handle.text() && !failed) {
+                handle.remove();
+                showError('No response came back. Try that again?');
             }
         }
 

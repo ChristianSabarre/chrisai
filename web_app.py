@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, Response, render_template, request, jsonify
 import chromadb
 import json
 import os
@@ -10,7 +10,12 @@ import logging
 import hashlib
 
 import retrieval
-from mistral_client import CHAT_MODEL, MistralEmbedding, chat as mistral_chat
+from mistral_client import (
+    CHAT_MODEL,
+    MistralEmbedding,
+    chat as mistral_chat,
+    chat_stream as mistral_chat_stream,
+)
 from prompts import build_system_prompt, build_user_prompt, describe_corpus
 
 # Set up logging
@@ -277,6 +282,70 @@ def chat():
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
         return jsonify({'error': 'An internal error occurred'}), 500
+
+def _sse(payload: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@app.route('/chat/stream', methods=['POST'])
+def chat_stream_route():
+    """Stream a reply as it is generated.
+
+    Retrieval runs before the response opens, so a failure there is still a
+    normal HTTP error rather than an error buried inside a 200 stream. Sources
+    are known at that point too, and are sent as the first event.
+    """
+    if not request.is_json:
+        return jsonify({'error': 'Request must be JSON'}), 400
+
+    user_message = (request.get_json() or {}).get('message', '').strip()
+    validation_error = validate_message(user_message)
+    if validation_error:
+        return jsonify({'error': validation_error}), 400
+    if not collection:
+        return jsonify({'error': 'System not initialized properly'}), 500
+
+    try:
+        result = retrieval.search(
+            collection,
+            user_message,
+            known_keys=patch_keys,
+            latest_key=(latest_patch or {}).get("patch_key"),
+            k=5,
+        )
+        rows = result["rows"]
+        sources = retrieval.cited_sources(rows)
+        logger.info(f"retrieval mode={result['mode']} chunks={len(rows)} (stream)")
+
+        corpus = describe_corpus(dataset)
+        system_prompt = build_system_prompt(corpus)
+        user_prompt = build_user_prompt(retrieval.format_context(rows), user_message)
+    except Exception as e:
+        logger.error(f"Retrieval failed: {e}")
+        return jsonify({'error': 'An internal error occurred'}), 500
+
+    def events():
+        yield _sse({'type': 'sources', 'sources': sources})
+        try:
+            for piece in mistral_chat_stream(system_prompt, user_prompt):
+                yield _sse({'type': 'delta', 'text': piece})
+        except Exception as e:
+            logger.error(f"Streaming failed: {e}")
+            yield _sse({'type': 'error',
+                        'message': "Sorry, I lost my train of thought. Try that again?"})
+        yield _sse({'type': 'done'})
+
+    return Response(
+        events(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            # Stops nginx-style proxies buffering the stream into one blob.
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
 
 @app.route('/health')
 def health():

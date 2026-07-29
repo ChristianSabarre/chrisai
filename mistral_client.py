@@ -152,16 +152,55 @@ def _extract_text(content) -> str:
     return str(content)
 
 
+def _build_messages(
+    system_prompt: str,
+    user_prompt: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
+
+
+def chat_stream(
+    system_prompt: str,
+    user_prompt: str,
+    history: Optional[List[Dict[str, str]]] = None,
+):
+    """Yield reply text incrementally.
+
+    Retries wrap only the call that opens the stream. Once tokens are flowing a
+    retry would replay text the caller has already emitted, so a mid-stream
+    failure is raised rather than retried.
+    """
+    stream = _with_retries(
+        lambda: get_client().chat.stream(
+            model=CHAT_MODEL,
+            messages=_build_messages(system_prompt, user_prompt, history),
+            temperature=CHAT_TEMPERATURE,
+        ),
+        what="chat stream",
+    )
+
+    with stream as events:
+        for event in events:
+            choices = getattr(getattr(event, "data", None), "choices", None)
+            if not choices:
+                continue
+            piece = _extract_text(getattr(choices[0].delta, "content", None))
+            if piece:
+                yield piece
+
+
 def chat(
     system_prompt: str,
     user_prompt: str,
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Send a grounded RAG turn to Mistral and return the reply text."""
-    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": user_prompt})
+    messages = _build_messages(system_prompt, user_prompt, history)
 
     response = _with_retries(
         lambda: get_client().chat.complete(

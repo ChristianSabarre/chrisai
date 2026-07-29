@@ -7,7 +7,10 @@ services:
     # Single worker: the vector index is built in memory at startup, so each
     # extra worker would re-embed the whole corpus. Extended timeout covers
     # the embedding pass during boot.
-    startCommand: gunicorn web_app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    # Threads rather than workers: streaming replies hold a connection open for
+    # their whole duration, and every extra worker would rebuild the in-memory
+    # index. Extended timeout covers the embedding pass during boot.
+    startCommand: gunicorn web_app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 180
     envVars:
       - key: MISTRAL_API_KEY
         sync: false
