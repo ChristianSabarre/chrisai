@@ -8,6 +8,9 @@ import uuid
 import logging
 
 import secrets
+import threading
+import time
+from collections import defaultdict
 
 import index_cache
 import retrieval
@@ -138,6 +141,46 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]],
     except Exception as e:
         logger.error(f"Error adding documents to collection: {e}")
         return False
+
+# Both endpoints spend API credit on every call, and the service is public, so
+# one script can drain the month's quota. Deliberately generous: a real person
+# asking questions will not notice it.
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "20"))
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "300"))
+
+_request_log: Dict[str, List[float]] = defaultdict(list)
+_rate_lock = threading.Lock()
+
+
+def client_ip() -> str:
+    """Caller address, honouring the proxy header the host sets."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def rate_limited() -> Optional[int]:
+    """Record this request; return seconds to wait if the caller is over."""
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW
+    ip = client_ip()
+
+    with _rate_lock:
+        # Drop addresses that have gone quiet, so the table cannot grow forever.
+        if len(_request_log) > 2000:
+            for known in [k for k, v in _request_log.items() if not v or v[-1] < cutoff]:
+                del _request_log[known]
+
+        hits = [t for t in _request_log[ip] if t > cutoff]
+        if len(hits) >= RATE_LIMIT_REQUESTS:
+            _request_log[ip] = hits
+            return int(hits[0] + RATE_LIMIT_WINDOW - now) + 1
+
+        hits.append(now)
+        _request_log[ip] = hits
+        return None
+
 
 def validate_message(message: str) -> Optional[str]:
     """Validate user input message.
@@ -352,10 +395,15 @@ def chat():
         if not request.is_json:
             return jsonify({'error': 'Request must be JSON'}), 400
         
+        retry_after = rate_limited()
+        if retry_after:
+            return jsonify({
+                'error': f"Easy there. Give it {retry_after} seconds and ask again."
+            }), 429
+
         data = request.get_json()
         user_message = data.get('message', '').strip()
-        
-        
+
         validation_error = validate_message(user_message)
         if validation_error:
             return jsonify({'error': validation_error}), 400
@@ -404,6 +452,12 @@ def chat_stream_route():
     """
     if not request.is_json:
         return jsonify({'error': 'Request must be JSON'}), 400
+
+    retry_after = rate_limited()
+    if retry_after:
+        return jsonify({
+            'error': f"Easy there. Give it {retry_after} seconds and ask again."
+        }), 429
 
     payload = request.get_json() or {}
     user_message = payload.get('message', '').strip()
