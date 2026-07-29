@@ -3,4 +3,5 @@ chromadb==1.0.20
 flask==3.1.2
 gunicorn==23.0.0
 mistralai==2.8.0
+numpy>=1.26
 requests==2.32.5

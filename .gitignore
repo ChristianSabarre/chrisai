@@ -14,9 +14,13 @@ env/
 .env.*
 !.env.example
 
-# Local vector store
+# Local vector store, and precomputed embeddings.
+# The cache is rebuilt by build_index.py during deployment rather than
+# committed: it is several megabytes, and a new copy on every corpus refresh
+# would grow history quickly.
 chroma_db/
 .chroma/
+embeddings.npz
 
 # Editor and OS
 .vscode/

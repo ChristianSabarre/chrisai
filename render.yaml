@@ -3,7 +3,10 @@ services:
     name: chrisai
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # Embeddings are computed here rather than on first request. Build output
+    # survives the idle spin-down that wipes nothing else, so the service comes
+    # back up without re-embedding the corpus or spending API calls.
+    buildCommand: pip install -r requirements.txt && python build_index.py
     # Single worker: the vector index is built in memory at startup, so each
     # extra worker would re-embed the whole corpus. Extended timeout covers
     # the embedding pass during boot.

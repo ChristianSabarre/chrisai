@@ -7,9 +7,9 @@ from datetime import datetime
 import uuid
 import logging
 
-import hashlib
 import secrets
 
+import index_cache
 import retrieval
 from mistral_client import (
     CHAT_MODEL,
@@ -67,18 +67,7 @@ collection = None
 patch_keys = []
 
 
-def corpus_fingerprint(dataset: List[Dict[str, Any]]) -> str:
-    """Identity of the indexed corpus, so a stale index gets rebuilt.
-
-    Covers the chunking parameters as well as the data: changing how notes are
-    split has to invalidate an index built under the old scheme.
-    """
-    h = hashlib.sha256()
-    h.update(f"v2:{retrieval.CHUNK_MAX_CHARS}:{retrieval.CHUNK_MIN_CHARS}".encode())
-    for record in dataset:
-        h.update((record.get("title") or "").encode("utf-8"))
-        h.update(str(len(record.get("final_content") or "")).encode())
-    return h.hexdigest()[:16]
+corpus_fingerprint = index_cache.corpus_fingerprint
 
 def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
     global dataset, latest_patch, oldest_patch
@@ -109,11 +98,12 @@ def load_patch_notes(filename: str) -> List[Dict[str, Any]]:
         logger.error(f"Error loading patch notes: {e}")
         return []
 
-def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bool:
+def add_documents_to_collection(collection, dataset: List[Dict[str, Any]],
+                                fingerprint: str) -> bool:
     if not dataset:
         logger.warning("No data to add to collection")
         return False
-    
+
     try:
         documents, metadatas, ids = retrieval.build_chunks(dataset)
 
@@ -121,11 +111,24 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]) -> bo
             logger.warning("No valid documents found to add")
             return False
 
+        # Vectors are computed once and reused. Passing them explicitly stops
+        # Chroma calling the embedding function for documents; queries still
+        # embed normally, which is one small call per question.
+        vectors = index_cache.load(fingerprint, len(documents))
+        if vectors is None:
+            logger.info(f"No embedding cache; embedding {len(documents)} chunks via "
+                        f"Mistral (run build_index.py to do this ahead of time)")
+            vectors = MistralEmbedding()(documents)
+            index_cache.save(fingerprint, vectors)
+        else:
+            logger.info(f"Loaded {len(vectors)} cached embeddings; no API calls needed")
+
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             end_idx = min(i + batch_size, len(documents))
             collection.add(
                 documents=documents[i:end_idx],
+                embeddings=vectors[i:end_idx],
                 metadatas=metadatas[i:end_idx],
                 ids=ids[i:end_idx]
             )
@@ -318,7 +321,7 @@ def initialize_system():
             embedding_function=MistralEmbedding(),
         )
 
-    if not add_documents_to_collection(collection, dataset_sorted):
+    if not add_documents_to_collection(collection, dataset_sorted, fingerprint):
         logger.error("Failed to add documents; index left unstamped so the next "
                      "start rebuilds it rather than trusting a partial index.")
         return False
