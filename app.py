@@ -4,6 +4,7 @@ import os
 from typing import List, Dict, Any
 
 from mistral_client import MistralEmbedding, chat as mistral_chat
+from prompts import build_system_prompt, build_user_prompt, describe_corpus
 
 COLLECTION_NAME = "valorant_patches"
 PATCH_NOTES_FILE = "feedme_patchnotes.json"
@@ -73,7 +74,7 @@ def add_documents_to_collection(collection, dataset: List[Dict[str, Any]]):
         return False
 
 # --- RAG Chat Function ---
-def chat_chris(prompt: str, collection, k: int = 3) -> str:
+def chat_chris(prompt: str, collection, dataset: List[Dict[str, Any]], k: int = 3) -> str:
     try:
         # Query the collection for relevant documents
         results = collection.query(
@@ -89,30 +90,9 @@ def chat_chris(prompt: str, collection, k: int = 3) -> str:
             context = "\n\n".join(retrieved_docs)
         
         
-        system_prompt = """You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
-
-Respond like you're just talking to a friend about the game:
-
-Examples of natural responses:
-- "Oh yeah, they hit Jett pretty hard in 9.11 - increased her dash cooldown to 12 seconds, so you can't escape as easily anymore"
-- "Haven't seen any Killjoy changes lately, but back in 6.08 they made her Nanoswarm easier to see and gave her turret less health"
-- "Dude, 10.04 was wild - they added that new agent Waylay and rotated the maps again"
-
-Keep it natural:
-- Use casual language and contractions (don't, can't, they're)
-- Add your own commentary on changes ("this was huge", "kinda needed", "players hated this")
-- Explain what changes actually mean for gameplay
-- Connect related changes ("since they nerfed X, Y became more popular")
-- If info seems mixed up or irrelevant, focus on what actually answers their question
-- Don't use formal bullet points - just explain things conversationally
-
-If you don't have good info, just say something like "Hmm, I don't see any recent Killjoy changes in what I've got. Want to ask about a specific patch or another agent?
-"""
-
-        user_prompt = f"""Context from Valorant Patch Notes:
-{context}
-
-User Question: {prompt}"""
+        corpus = describe_corpus(dataset)
+        system_prompt = build_system_prompt(corpus)
+        user_prompt = build_user_prompt(context, prompt)
 
         return mistral_chat(system_prompt, user_prompt)
 
@@ -154,7 +134,7 @@ def main():
                 break
             
             print("Chris AI: ", end="", flush=True)
-            response = chat_chris(user_input, collection)
+            response = chat_chris(user_input, collection, dataset)
             print(response)
             print()  # Add spacing between responses
             

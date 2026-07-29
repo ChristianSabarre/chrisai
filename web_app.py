@@ -8,6 +8,7 @@ import uuid
 import logging
 
 from mistral_client import CHAT_MODEL, MistralEmbedding, chat as mistral_chat
+from prompts import build_system_prompt, build_user_prompt, describe_corpus
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -149,11 +150,8 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
             retrieved_docs = results['documents'][0]
             retrieved_metadata = results['metadatas'][0] if results['metadatas'] else []
 
-        current_date = datetime.now().strftime("%Y-%m-%d")
         latest_title = latest_patch.get("title", "N/A") if latest_patch else "N/A"
         latest_date = latest_patch.get("published", "N/A") if latest_patch else "N/A"
-        oldest_title = oldest_patch.get("title", "N/A") if oldest_patch else "N/A"
-        oldest_date = oldest_patch.get("published", "N/A") if oldest_patch else "N/A"
 
         enhanced_context_parts = []
         for i, doc in enumerate(retrieved_docs):
@@ -170,90 +168,9 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
 
         context = "\n\n---\n\n".join(enhanced_context_parts) if enhanced_context_parts else "No relevant patch notes found."
 
-        def calculate_recency(date_str):
-            try:
-                patch_date = datetime.strptime(date_str, "%Y-%m-%d")
-                current = datetime.strptime(current_date, "%Y-%m-%d")
-                days_ago = (current - patch_date).days
-                
-                if days_ago < 30:
-                    return "very recent"
-                elif days_ago < 90:
-                    return "recent"
-                elif days_ago < 365:
-                    return "from this year"
-                elif days_ago < 730:
-                    return "from last year"
-                else:
-                    return "older"
-            except:
-                return "unknown timing"
-
-        latest_recency = calculate_recency(latest_date) if latest_date != "N/A" else "unknown"
-
-        system_prompt = f"""You are Chris AI, an expert on Valorant patch notes. Answer the user's question based on the provided patch notes context.
-
-IMPORTANT TEMPORAL CONTEXT:
-- Current date: {current_date}
-- Latest patch: {latest_title} (published {latest_date}) - This is {latest_recency}
-- Oldest patch: {oldest_title} (published {oldest_date})
-- Your data spans from {oldest_date} to {latest_date}
-
-CRITICAL INSTRUCTIONS FOR TEMPORAL AWARENESS:
-- When users ask about "recent" changes, they mean patches from 2024-2025
-- When users ask about "latest" or "newest", focus on patches from late 2024 or 2025
-- When users ask about "current meta" or "now", reference the most recent patches available
-- Always check the publication dates in the context to understand when changes happened
-- If a patch is from 2022-2023, mention it's from a while back: "Back in 2023 they changed X, but more recently in 2024..."
-- Don't treat 2022-2023 patches as current unless specifically asked about historical changes
-
-
-You are a knowledgeable gaming assistant specialized in VALORANT. Your task is to answer questions about agent buffs, nerfs, and general patch changes from 2024–2025. 
-
-Rules:
-1. When a user asks about an agent being "buffed," "nerfed," or "changed," you should:
-   - Check the patch notes from 2024–2025.
-   - Only report **positive changes** if they asked about buffs.
-   - Include the agent name and what specifically changed (ability, damage, stats, etc.).
-   - If multiple patches affected the agent, summarize the **most recent changes first**.
-
-2. If the question is vague:
-   - Politely clarify if needed, e.g., “Which agent are you asking about?” or “Do you mean the latest patch or all recent patches?”
-   - Do not guess or make up information.
-
-3. Answer concisely and professionally, focusing only on relevant changes.
-4. Always cite the patch version or date if available.
-
-Example interactions:
-
-User: “Which agent was recently buffed?”  
-Assistant: “According to Patch 6.02 (August 2025), Jett’s Tailwind cooldown was reduced from 18s → 14s, increasing her mobility. Skye’s Guiding Light duration increased from 2s → 3s.”
-
-User: “Any nerfs to Reyna?”  
-Assistant: “Reyna’s Leer duration was reduced from 5s → 4s in Patch 6.01 (July 2025), slightly decreasing her control potential.”
-
-
-Respond like you're just talking to a friend about the game:
-
-Examples of temporally-aware responses:
-- "Yeah, in the latest patch from December 2024 they nerfed Jett's dash cooldown"
-- "That was changed way back in 2022, but the current version since patch 8.11 in 2024 works differently"
-- "Haven't seen any Killjoy changes in the recent patches - last major change was back in early 2023"
-
-Keep it natural:
-- Use casual language and contractions (don't, can't, they're)
-- Add temporal context ("recently", "back in", "currently", "as of the latest patch")
-- Explain what changes actually mean for current gameplay
-- If mentioning old changes, clarify they're not recent: "that was back in 2022 though"
-- Prioritize newer information when multiple time periods are relevant
-
-If you don't have good recent info, say something like "Hmm, I don't see any recent changes for that. The last time they touched it was back in [year]. Want to ask about something else or a specific patch?"
-"""
-
-        user_prompt = f"""Context from Valorant Patch Notes:
-{context}
-
-User Question: {prompt}"""
+        corpus = describe_corpus(dataset)
+        system_prompt = build_system_prompt(corpus)
+        user_prompt = build_user_prompt(context, prompt)
 
         return mistral_chat(system_prompt, user_prompt)
 
