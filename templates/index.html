@@ -309,6 +309,48 @@
 
         .msg.user .bubble .text { color: var(--text-muted); }
 
+        /* Sources make the grounding checkable: an answer with no citation is
+           visibly different from one drawn off a named patch. */
+        .sources {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 7px;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid var(--keyline);
+        }
+
+        .sources .label { margin-right: 3px; }
+
+        .src {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            background: rgba(236, 232, 225, 0.05);
+            border: 1px solid var(--keyline);
+            padding: 5px 9px;
+        }
+
+        .src::before {
+            content: '';
+            width: 5px;
+            height: 5px;
+            background: var(--teal);
+            transform: rotate(45deg);
+            flex-shrink: 0;
+        }
+
+        .src .when {
+            color: var(--text-dim);
+            font-weight: 400;
+            letter-spacing: 0.04em;
+        }
+
         .alert {
             margin-bottom: 22px;
             padding: 13px 17px;
@@ -547,7 +589,34 @@
             return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
-        function addMessage(text, who) {
+        function buildSources(sources) {
+            const wrap = document.createElement('div');
+            wrap.className = 'sources';
+
+            const tag = document.createElement('span');
+            tag.className = 'label';
+            tag.textContent = sources.length === 1 ? 'Source' : 'Sources';
+            wrap.appendChild(tag);
+
+            sources.slice(0, 6).forEach(function (s) {
+                const pill = document.createElement('span');
+                pill.className = 'src';
+                pill.appendChild(
+                    document.createTextNode(s.patch ? 'Patch ' + s.patch : s.title)
+                );
+                if (s.published) {
+                    const when = document.createElement('span');
+                    when.className = 'when';
+                    when.textContent = s.published;
+                    pill.appendChild(when);
+                }
+                wrap.appendChild(pill);
+            });
+
+            return wrap;
+        }
+
+        function addMessage(text, who, sources) {
             const row = document.createElement('div');
             row.className = 'msg ' + who;
 
@@ -577,6 +646,9 @@
             meta.appendChild(time);
             bubble.appendChild(meta);
             bubble.appendChild(body);
+            if (sources && sources.length) {
+                bubble.appendChild(buildSources(sources));
+            }
             row.appendChild(badge);
             row.appendChild(bubble);
 
@@ -612,7 +684,7 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    addMessage(data.bot_message.message, 'bot');
+                    addMessage(data.bot_message.message, 'bot', data.bot_message.sources);
                 } else {
                     showError(data.error || 'Something went wrong handling that message.');
                 }

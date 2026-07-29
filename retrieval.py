@@ -237,12 +237,24 @@ def format_context(rows: Sequence[Dict[str, Any]]) -> str:
 
 
 def cited_sources(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Distinct patches behind a set of retrieved chunks, newest first."""
-    seen, sources = set(), []
+    """Distinct patches behind a set of retrieved chunks, newest first.
+
+    Only chunks that actually fit inside the context window are cited, so the
+    list shown to the user matches what the model was given rather than what
+    retrieval happened to return.
+    """
+    seen, sources, total = set(), [], 0
     for row in rows:
+        total += len(row.get("document") or "")
+        if total > CONTEXT_MAX_CHARS:
+            break
         meta = row.get("metadata") or {}
         title = meta.get("title")
         if title and title not in seen:
             seen.add(title)
-            sources.append({"title": title, "published": meta.get("published", "")})
+            sources.append({
+                "title": title,
+                "patch": meta.get("patch_key", ""),
+                "published": meta.get("published", ""),
+            })
     return sorted(sources, key=lambda s: s["published"], reverse=True)

@@ -139,12 +139,13 @@ def validate_message(message: str) -> Optional[str]:
     
     return None
 
-def chat_chris(prompt: str, collection, k: int = 5) -> str:
+def chat_chris(prompt: str, collection, k: int = 5) -> Dict[str, Any]:
+    """Answer a question and report which patches the answer was drawn from."""
     try:
         validation_error = validate_message(prompt)
         if validation_error:
-            return f"Error: {validation_error}"
-        
+            return {"answer": f"Error: {validation_error}", "sources": []}
+
         result = retrieval.search(
             collection,
             prompt,
@@ -165,11 +166,16 @@ def chat_chris(prompt: str, collection, k: int = 5) -> str:
         system_prompt = build_system_prompt(corpus)
         user_prompt = build_user_prompt(context, prompt)
 
-        return mistral_chat(system_prompt, user_prompt)
+        answer = mistral_chat(system_prompt, user_prompt)
+        return {"answer": answer, "sources": sources}
 
     except Exception as e:
         logger.error(f"Error generating response: {e}")
-        return "Sorry, I'm having trouble processing your request right now. Try asking again in a moment!"
+        return {
+            "answer": "Sorry, I'm having trouble processing your request right now. "
+                      "Try asking again in a moment!",
+            "sources": [],
+        }
 
 def initialize_system():
     global client, collection, patch_keys
@@ -246,18 +252,19 @@ def chat():
         if not collection:
             return jsonify({'error': 'System not initialized properly'}), 500
         
-        response = chat_chris(user_message, collection)
-        
+        result = chat_chris(user_message, collection)
+
         user_msg = {
             'id': str(uuid.uuid4()),
             'message': user_message,
             'sender': 'user',
             'timestamp': datetime.now().isoformat()
         }
-        
+
         bot_msg = {
             'id': str(uuid.uuid4()),
-            'message': response,
+            'message': result['answer'],
+            'sources': result['sources'],
             'sender': 'bot',
             'timestamp': datetime.now().isoformat()
         }
