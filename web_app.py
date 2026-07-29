@@ -220,7 +220,14 @@ initialize_system()
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    corpus = describe_corpus(dataset)
+    return render_template(
+        'index.html',
+        patch_count=len(dataset),
+        latest_patch=corpus.latest_title.replace("VALORANT Patch Notes ", ""),
+        latest_date=corpus.latest_date,
+        oldest_date=corpus.oldest_date,
+    )
 
 @app.route('/chat', methods=['POST'])
 def chat():
