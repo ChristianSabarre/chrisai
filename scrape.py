@@ -82,17 +82,23 @@ def patch_number(url: str, title: str) -> Optional[float]:
 # h2 for the platform qualifier under each section.
 HEADING_TAGS = ("h1", "h2", "h3", "h4")
 BLOCK_TAGS = HEADING_TAGS + ("p", "li")
-FURNITURE = {"related articles", "related news", "recent news"}
+FURNITURE = {"related articles", "related news", "recent news", "you may also like"}
+# Promo cards in the recommendations rail carry a machine timestamp, which never
+# appears in patch prose.
+PROMO_CARD = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 def extract_blocks(body, title: str = "") -> str:
-    """Flatten an article body to text, keeping headings and avoiding repeats.
+    """Flatten an article body to text, keeping headings and dropping furniture.
 
     Headings are marked with a leading '## ' so the chunker can split on
     sections. Elements nested inside an already-emitted block are skipped: a
     <p> inside an <li> would otherwise contribute its text twice, once as part
-    of the list item and once on its own, which had been doubling the size of
-    the corpus.
+    of the list item and once on its own, which had been doubling the corpus.
+
+    Extraction stops at the recommendations rail. Every article ends with cards
+    for the newest few patches, so leaving it in stamped a 2020 note with text
+    describing patches from 2026 and invited the model to date changes wrongly.
     """
     emitted = set()
     lines = []
@@ -106,7 +112,11 @@ def extract_blocks(body, title: str = "") -> str:
             continue
 
         is_heading = el.name in HEADING_TAGS
-        if is_heading and (text.strip().lower() in FURNITURE or text.strip() == title.strip()):
+        if is_heading and text.strip().lower() in FURNITURE:
+            break
+        if is_heading and text.strip() == title.strip():
+            continue
+        if PROMO_CARD.search(text):
             continue
 
         emitted.add(id(el))
