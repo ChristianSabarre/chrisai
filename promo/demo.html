@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHRIS // AI — Motion Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0F1923; --surface:#1A242E; --raised:#273039; --keyline:#3F474F;
+  --text:#ECE8E1; --muted:#BCB9B4; --dim:#9FA3A7;
+  --accent:#FF4655; --accent-hi:#FF6B77; --accent-lo:#CC3844; --teal:#22FFC5;
+  --display:'Anton',Impact,sans-serif;
+  --body:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#05090d;overflow:hidden}
+body{font-family:var(--body);color:var(--text);display:grid;place-items:center}
+
+/* 16:9 stage, scaled to fit so a window capture crops clean */
+#stage{
+  position:relative;width:1600px;height:900px;background:var(--bg);
+  overflow:hidden;transform-origin:center center;
+}
+
+/* ---- persistent HUD frame ---- */
+.bracket{position:absolute;width:54px;height:54px;border:3px solid var(--accent);opacity:0;z-index:40}
+.bracket.tl{top:34px;left:34px;border-right:0;border-bottom:0}
+.bracket.tr{top:34px;right:34px;border-left:0;border-bottom:0}
+.bracket.bl{bottom:34px;left:34px;border-right:0;border-top:0}
+.bracket.br{bottom:34px;right:34px;border-left:0;border-top:0}
+.on .bracket{opacity:1;transition:opacity .5s ease-out}
+
+#rail{
+  position:absolute;left:34px;right:34px;bottom:34px;height:1px;
+  background:var(--keyline);z-index:40;transform:scaleX(0);transform-origin:left;
+}
+.on #rail{transform:scaleX(1);transition:transform 1.1s ease-out .25s}
+
+#ticker{
+  position:absolute;left:38px;bottom:48px;z-index:41;
+  font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  color:var(--dim);text-transform:uppercase;opacity:0;
+}
+.on #ticker{opacity:1;transition:opacity .6s ease-out .8s}
+#ticker b{color:var(--teal);font-weight:400}
+
+/* ---- scenes ---- */
+.scene{
+  position:absolute;inset:0;display:grid;place-content:center;
+  padding:0 132px;opacity:0;pointer-events:none;z-index:10;
+}
+.scene.live{opacity:1;pointer-events:auto;z-index:20}
+
+/* Diagonal cut-in, echoing the skewed agent-select panels */
+.scene.live .cut{
+  animation:cut .62s ease-out both;
+}
+@keyframes cut{
+  from{clip-path:polygon(0 0,0 0,0 100%,0 100%);opacity:0}
+  to{clip-path:polygon(-12% 0,112% 0,112% 100%,-12% 100%);opacity:1}
+}
+
+.eyebrow{
+  display:inline-flex;align-items:center;gap:10px;
+  font-size:12px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+}
+.eyebrow::before{content:'';width:6px;height:6px;background:var(--accent);transform:rotate(45deg)}
+
+h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-height:.94;letter-spacing:.02em}
+
+/* ---- 1 · title ---- */
+#s1{justify-items:center;text-align:center}
+#s1 h1{font-size:158px}
+#s1 h1 .sl{color:var(--accent)}
+#s1 .sub{
+  margin-top:26px;font-size:15px;font-weight:600;letter-spacing:.46em;
+  text-transform:uppercase;color:var(--muted);
+}
+#s1 .under{width:0;height:4px;background:var(--accent);margin-top:34px}
+#s1.live .under{animation:grow .8s ease-out .5s both}
+@keyframes grow{to{width:320px}}
+
+/* ---- 2 · scale ---- */
+#s2 .stats{display:flex;gap:96px;margin-top:44px}
+#s2 .n{font-family:var(--display);font-size:118px;line-height:1;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+#s2 .n.t{color:var(--teal)}
+#s2 .k{margin-top:12px;font-size:12px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+#s2 h2{font-size:70px;max-width:17ch;margin-top:20px}
+#s2 .span{margin-top:52px;display:flex;align-items:center;gap:18px;font-family:var(--mono);font-size:13px;color:var(--muted);letter-spacing:.12em}
+#s2 .line{flex:1;height:1px;background:linear-gradient(90deg,var(--accent),var(--teal));transform:scaleX(0);transform-origin:left}
+#s2.live .line{animation:grow2 1.3s ease-out .55s both}
+@keyframes grow2{to{transform:scaleX(1)}}
+
+/* ---- 3 · demo ---- */
+#s3{place-content:center;padding:0 116px}
+#s3 .panel{
+  width:1160px;background:var(--surface);border:1px solid var(--keyline);
+  padding:34px 40px 38px;
+  clip-path:polygon(0 0,0 100%,calc(100% - 30px) 100%,100% calc(100% - 30px),100% 0);
+}
+#s3 .q{display:flex;align-items:baseline;gap:14px}
+#s3 .qlab{font-size:11px;font-weight:700;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+#s3 .qtext{font-size:29px;font-weight:500}
+#s3 .caret{display:inline-block;width:11px;height:26px;background:var(--accent);vertical-align:-3px;margin-left:3px}
+#s3 .caret.blink{animation:blink .9s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+#s3 .status{
+  margin-top:24px;display:flex;align-items:center;gap:11px;height:20px;
+  font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);opacity:0;
+}
+#s3 .status.show{opacity:1;transition:opacity .3s ease-out}
+#s3 .ticks{display:flex;gap:5px}
+#s3 .ticks i{width:6px;height:6px;background:var(--accent);transform:rotate(45deg);animation:pulse 1.05s ease-in-out infinite}
+#s3 .ticks i:nth-child(2){animation-delay:.15s}
+#s3 .ticks i:nth-child(3){animation-delay:.3s}
+@keyframes pulse{0%,100%{opacity:.22}50%{opacity:1}}
+
+#s3 .src{
+  margin-top:22px;display:flex;align-items:center;gap:10px;opacity:0;transform:translateY(6px);
+}
+#s3 .src.show{opacity:1;transform:none;transition:opacity .4s ease-out,transform .4s ease-out}
+#s3 .srclab{font-size:11px;font-weight:600;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+#s3 .pill{
+  display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;
+  color:var(--text);background:rgba(34,255,197,.07);border:1px solid rgba(34,255,197,.34);padding:7px 12px;
+}
+#s3 .pill::before{content:'';width:6px;height:6px;background:var(--teal);transform:rotate(45deg)}
+#s3 .pill .d{color:var(--dim)}
+#s3 .ans{
+  margin-top:22px;font-size:20px;line-height:1.66;color:var(--text);min-height:132px;
+  border-left:2px solid var(--accent);padding-left:22px;
+}
+#s3 .ans w{opacity:0}
+#s3 .ans w.in{opacity:1;transition:opacity .16s ease-out}
+
+/* ---- 4 · proof ---- */
+#s4 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:26px;margin-top:40px;width:1180px}
+#s4 .card{
+  background:var(--surface);border:1px solid var(--keyline);padding:28px 30px;
+  clip-path:polygon(0 0,0 100%,calc(100% - 22px) 100%,100% calc(100% - 22px),100% 0);
+  opacity:0;transform:translateX(-26px) skewX(-4deg);
+}
+#s4.live .card{animation:slide .5s ease-out both}
+#s4.live .card:nth-child(2){animation-delay:.12s}
+#s4.live .card:nth-child(3){animation-delay:.24s}
+#s4.live .card:nth-child(4){animation-delay:.36s}
+@keyframes slide{to{opacity:1;transform:none}}
+#s4 .ct{display:flex;align-items:center;gap:11px;font-family:var(--display);font-size:26px;letter-spacing:.02em;text-transform:uppercase}
+#s4 .ct::before{content:'';width:8px;height:8px;background:var(--accent);transform:rotate(45deg);flex-shrink:0}
+#s4 .cd{margin-top:11px;font-size:16px;line-height:1.6;color:var(--muted)}
+
+/* ---- 5 · close ---- */
+#s5{justify-items:center;text-align:center}
+#s5 h1{font-size:126px}
+#s5 h1 .sl{color:var(--accent)}
+#s5 .stack{
+  margin-top:34px;display:flex;gap:0;border:1px solid var(--keyline);
+}
+#s5 .stack span{
+  font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);padding:14px 26px;border-right:1px solid var(--keyline);
+}
+#s5 .stack span:last-child{border-right:0}
+#s5 .url{
+  margin-top:38px;font-family:var(--mono);font-size:17px;letter-spacing:.1em;color:var(--teal);
+}
+#s5 .note{margin-top:14px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+
+/* ---- recording hint (excluded from capture by hiding) ---- */
+#hint{
+  position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:99;
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:#5c6672;
+  background:rgba(5,9,13,.9);padding:7px 14px;border:1px solid #1d262f;
+  text-transform:uppercase;transition:opacity .4s ease-out;
+}
+#hint.gone{opacity:0;pointer-events:none}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div class="bracket tl"></div><div class="bracket tr"></div>
+  <div class="bracket bl"></div><div class="bracket br"></div>
+  <div id="rail"></div>
+  <div id="ticker">Corpus <b>148</b> patches &nbsp;/&nbsp; 2020 &ndash; 2026 &nbsp;/&nbsp; latest <b>13.02</b></div>
+
+  <section class="scene" id="s1">
+    <h1 class="cut">CHRIS <span class="sl">//</span> AI</h1>
+    <div class="sub">VALORANT Patch Intel</div>
+    <div class="under"></div>
+  </section>
+
+  <section class="scene" id="s2">
+    <div class="eyebrow">The archive</div>
+    <h2 class="cut">Six years of patch notes. One question away.</h2>
+    <div class="stats">
+      <div><div class="n" data-to="148">0</div><div class="k">Patch notes</div></div>
+      <div><div class="n t" data-to="921">0</div><div class="k">Indexed sections</div></div>
+      <div><div class="n" data-to="6">0</div><div class="k">Years covered</div></div>
+    </div>
+    <div class="span"><span>2020</span><span class="line"></span><span>2026</span></div>
+  </section>
+
+  <section class="scene" id="s3">
+    <div class="panel cut">
+      <div class="q">
+        <span class="qlab">Ask</span>
+        <span class="qtext"><span id="typed"></span><span class="caret blink" id="caret"></span></span>
+      </div>
+      <div class="status" id="status">
+        <span class="ticks"><i></i><i></i><i></i></span><span>Reading the notes</span>
+      </div>
+      <div class="src" id="src">
+        <span class="srclab">Source</span>
+        <span class="pill">Patch 13.02 <span class="d">2026-07-28</span></span>
+      </div>
+      <div class="ans" id="ans"></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s4">
+    <div class="eyebrow">Why it holds up</div>
+    <div class="grid">
+      <div class="card"><div class="ct">Cited, not claimed</div><div class="cd">Every answer names the patch and date it came from, so any statement can be checked against the note itself.</div></div>
+      <div class="card"><div class="ct">Exact or semantic</div><div class="cd">Name a version and it retrieves that patch by metadata. Ask by topic and it searches meaning across every section.</div></div>
+      <div class="card"><div class="ct">Answers as they form</div><div class="cd">Replies stream token by token, with the sources appearing before the first word arrives.</div></div>
+      <div class="card"><div class="ct">Keeps the thread</div><div class="cd">Follow-ups resolve against what came before, so &ldquo;what about Sage?&rdquo; searches for Sage, not for nothing.</div></div>
+    </div>
+  </section>
+
+  <section class="scene" id="s5">
+    <h1 class="cut">CHRIS <span class="sl">//</span> AI</h1>
+    <div class="stack">
+      <span>Python</span><span>Flask</span><span>ChromaDB</span><span>Mistral AI</span><span>RAG</span>
+    </div>
+    <div class="url">chrisai-pny8.onrender.com</div>
+    <div class="note">Unofficial fan project &middot; not affiliated with Riot Games</div>
+  </section>
+</div>
+
+<div id="hint">R replay &nbsp;·&nbsp; H hide this</div>
+
+<script>
+(function(){
+  const stage=document.getElementById('stage');
+  const hint=document.getElementById('hint');
+  const timers=[];
+  const at=(ms,fn)=>timers.push(setTimeout(fn,ms));
+
+  function fit(){
+    const s=Math.min(innerWidth/1600,innerHeight/900);
+    stage.style.transform='scale('+s+')';
+  }
+  addEventListener('resize',fit); fit();
+
+  const QUESTION='What changed in patch 13.02?';
+  const ANSWER='Patch 13.02 (2026-07-28) is a small one. Phoenix got a nerf to his ultimate frequency, with ultimate points going from 6 to 7. Split, Corrode and Lotus were added to Retakes, and AROS: Replication was delayed. The rest is agent and map bug fixes.';
+
+  function show(id){
+    document.querySelectorAll('.scene').forEach(s=>s.classList.remove('live'));
+    document.getElementById(id).classList.add('live');
+  }
+
+  function countUp(el,to,ms){
+    const t0=performance.now();
+    (function step(now){
+      const p=Math.min((now-t0)/ms,1);
+      el.textContent=Math.round(to*(1-Math.pow(1-p,3)));
+      if(p<1) requestAnimationFrame(step);
+    })(t0);
+  }
+
+  function typeInto(el,text,perChar,done){
+    let i=0;
+    (function tick(){
+      el.textContent=text.slice(0,++i);
+      if(i<text.length) at(perChar,tick); else done&&done();
+    })();
+  }
+
+  function streamInto(el,text,perWord){
+    el.innerHTML='';
+    const words=text.split(' ').map(w=>{
+      const n=document.createElement('w');
+      n.textContent=w+' ';
+      el.appendChild(n);
+      return n;
+    });
+    words.forEach((n,i)=>at(i*perWord,()=>n.classList.add('in')));
+    return words.length*perWord;
+  }
+
+  function run(){
+    timers.forEach(clearTimeout); timers.length=0;
+    document.body.classList.remove('on');
+    document.getElementById('status').classList.remove('show');
+    document.getElementById('src').classList.remove('show');
+    document.getElementById('typed').textContent='';
+    document.getElementById('ans').innerHTML='';
+    hint.classList.add('gone');
+
+    void stage.offsetWidth;
+    at(120,()=>document.body.classList.add('on'));
+
+    // 1 · title
+    at(150,()=>show('s1'));
+
+    // 2 · scale
+    at(3900,()=>{
+      show('s2');
+      document.querySelectorAll('#s2 .n').forEach(n=>countUp(n,+n.dataset.to,1250));
+    });
+
+    // 3 · demo
+    at(9200,()=>{
+      show('s3');
+      at(500,()=>typeInto(document.getElementById('typed'),QUESTION,46,()=>{
+        document.getElementById('caret').classList.remove('blink');
+        at(280,()=>document.getElementById('status').classList.add('show'));
+        at(1500,()=>{
+          document.getElementById('status').classList.remove('show');
+          document.getElementById('src').classList.add('show');
+        });
+        at(1900,()=>streamInto(document.getElementById('ans'),ANSWER,44));
+      }));
+    });
+
+    // 4 · proof
+    at(21500,()=>show('s4'));
+
+    // 5 · close
+    at(28200,()=>show('s5'));
+
+    at(34500,()=>hint.classList.remove('gone'));
+  }
+
+  addEventListener('keydown',e=>{
+    const k=e.key.toLowerCase();
+    if(k==='r') run();
+    if(k==='h') hint.classList.toggle('gone');
+  });
+
+  window.__run=run;
+  run();
+})();
+</script>
+</body>
+</html>
