@@ -170,6 +170,9 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
   margin-top:38px;font-family:var(--mono);font-size:17px;letter-spacing:.1em;color:var(--teal);
 }
 #s5 .note{margin-top:14px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+/* Required attribution. Legible rather than hidden - it has to survive the
+   recording to actually count as a credit. */
+#s5 .credit{margin-top:22px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:#6f7883}
 
 /* ---- start gate: browsers block audio until the page is clicked ---- */
 #gate{
@@ -270,6 +273,13 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
     </div>
     <div class="url">chrisai-pny8.onrender.com</div>
     <div class="note">Unofficial fan project &middot; not affiliated with Riot Games</div>
+    <!-- Uppbeat's free plan requires a credit for every track in every video it
+         appears in. Paste the licence code from your Download History below;
+         a new one is generated per download and is tied to your account. -->
+    <div class="credit">
+      Music: &ldquo;Grid&rdquo; by Hartzmann &mdash; uppbeat.io/t/hartzmann/grid
+      <span id="licence">&middot; License code: PASTE_YOURS_HERE</span>
+    </div>
   </section>
 </div>
 
@@ -295,7 +305,15 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
      against windows of 3.75 / 5.30 / 12.30 / 6.70 / 6.30.
      Music generation needs a paid ElevenLabs plan, so the bed is a
      looped ambient effect rather than a composed track.            */
-  const VOL={bed:.20,vo:1,transition:.42,confirm:.32};
+  /* Drop "Grid" by Hartzmann in as audio/bed.mp3, downloaded from
+     uppbeat.io/track/hartzmann/grid. Nothing else needs changing.
+
+     BED_VOL is set for a mixed music track, lower than the ambient effect it
+     replaces, so the narration stays clear over the busier passages.
+     BED_START skips into the track if its opening is too sparse to carry the
+     title card - set it to a number of seconds. */
+  const BED_VOL=.13, BED_START=0;
+  const VOL={bed:BED_VOL,vo:1,transition:.42,confirm:.32};
   const A={};
   ['vo1','vo2','vo3','vo4','vo5','transition','confirm','bed'].forEach(n=>{
     const el=new Audio('audio/'+n+'.mp3');
@@ -317,7 +335,10 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
   }
   function startBed(){
     if(muted) return;
-    A.bed.currentTime=0; A.bed.volume=VOL.bed;
+    A.bed.volume=VOL.bed;
+    // Seeking can fail before metadata has loaded; falling back to 0 just
+    // starts the track from its beginning rather than silently not playing.
+    try{ A.bed.currentTime=BED_START; }catch(e){ A.bed.currentTime=0; }
     A.bed.play().catch(()=>{});
   }
   function fadeBed(ms){
