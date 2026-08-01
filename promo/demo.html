@@ -171,6 +171,32 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
 }
 #s5 .note{margin-top:14px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
 
+/* ---- start gate: browsers block audio until the page is clicked ---- */
+#gate{
+  position:fixed;inset:0;z-index:200;display:grid;place-content:center;justify-items:center;
+  background:#05090d;cursor:pointer;transition:opacity .45s ease-out;
+}
+#gate.gone{opacity:0;pointer-events:none}
+#gate .play{
+  width:96px;height:96px;border:3px solid var(--accent);background:transparent;
+  display:grid;place-content:center;transform:skewX(-13deg);
+  box-shadow:-4px 4px 0 0 var(--accent-lo);
+  transition:background-color .3s ease-in-out;
+}
+#gate:hover .play{background:rgba(255,70,85,.14)}
+#gate .play::after{
+  content:'';width:0;height:0;transform:skewX(13deg) translateX(3px);
+  border-top:15px solid transparent;border-bottom:15px solid transparent;
+  border-left:25px solid var(--accent);
+}
+#gate .lab{
+  margin-top:30px;font-family:var(--display);font-size:26px;letter-spacing:.06em;text-transform:uppercase;
+}
+#gate .sub{
+  margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim);
+}
+
 /* ---- recording hint (excluded from capture by hiding) ---- */
 #hint{
   position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:99;
@@ -247,14 +273,61 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
   </section>
 </div>
 
-<div id="hint">R replay &nbsp;·&nbsp; H hide this</div>
+<div id="gate">
+  <div class="play"></div>
+  <div class="lab">Play Reel</div>
+  <div class="sub">Click to start with sound</div>
+</div>
+
+<div id="hint">R replay &nbsp;·&nbsp; M mute &nbsp;·&nbsp; H hide this</div>
 
 <script>
 (function(){
   const stage=document.getElementById('stage');
   const hint=document.getElementById('hint');
+  const gate=document.getElementById('gate');
   const timers=[];
   const at=(ms,fn)=>timers.push(setTimeout(fn,ms));
+
+  /* ---- audio ---------------------------------------------------------
+     Durations were measured, not assumed, and each line sits inside its
+     scene with room to spare: 3.30 / 4.60 / 8.68 / 5.20 / 4.55 seconds
+     against windows of 3.75 / 5.30 / 12.30 / 6.70 / 6.30.
+     Music generation needs a paid ElevenLabs plan, so the bed is a
+     looped ambient effect rather than a composed track.            */
+  const VOL={bed:.20,vo:1,transition:.42,confirm:.32};
+  const A={};
+  ['vo1','vo2','vo3','vo4','vo5','transition','confirm','bed'].forEach(n=>{
+    const el=new Audio('audio/'+n+'.mp3');
+    el.preload='auto';
+    A[n]=el;
+  });
+  A.bed.loop=true; A.bed.volume=VOL.bed;
+  let muted=false;
+
+  function play(name,vol){
+    if(muted) return;
+    // Clone one-shots so overlapping plays do not cut each other off.
+    const el=A[name].cloneNode();
+    el.volume=vol;
+    el.play().catch(()=>{});
+  }
+  function stopAudio(){
+    A.bed.pause(); A.bed.currentTime=0;
+  }
+  function startBed(){
+    if(muted) return;
+    A.bed.currentTime=0; A.bed.volume=VOL.bed;
+    A.bed.play().catch(()=>{});
+  }
+  function fadeBed(ms){
+    const from=A.bed.volume, t0=performance.now();
+    (function step(now){
+      const p=Math.min((now-t0)/ms,1);
+      A.bed.volume=from*(1-p);
+      if(p<1) requestAnimationFrame(step); else A.bed.pause();
+    })(t0);
+  }
 
   function fit(){
     const s=Math.min(innerWidth/1600,innerHeight/900);
@@ -301,56 +374,78 @@ h1,h2{font-family:var(--display);font-weight:400;text-transform:uppercase;line-h
 
   function run(){
     timers.forEach(clearTimeout); timers.length=0;
+    stopAudio();
     document.body.classList.remove('on');
     document.getElementById('status').classList.remove('show');
     document.getElementById('src').classList.remove('show');
     document.getElementById('typed').textContent='';
     document.getElementById('ans').innerHTML='';
+    document.getElementById('caret').classList.add('blink');
     hint.classList.add('gone');
 
     void stage.offsetWidth;
     at(120,()=>document.body.classList.add('on'));
+    startBed();
 
     // 1 · title
     at(150,()=>show('s1'));
+    at(600,()=>play('vo1',VOL.vo));
 
     // 2 · scale
     at(3900,()=>{
       show('s2');
+      play('transition',VOL.transition);
       document.querySelectorAll('#s2 .n').forEach(n=>countUp(n,+n.dataset.to,1250));
     });
+    at(4300,()=>play('vo2',VOL.vo));
 
     // 3 · demo
     at(9200,()=>{
       show('s3');
+      play('transition',VOL.transition);
       at(500,()=>typeInto(document.getElementById('typed'),QUESTION,46,()=>{
         document.getElementById('caret').classList.remove('blink');
         at(280,()=>document.getElementById('status').classList.add('show'));
         at(1500,()=>{
           document.getElementById('status').classList.remove('show');
           document.getElementById('src').classList.add('show');
+          play('confirm',VOL.confirm);
         });
         at(1900,()=>streamInto(document.getElementById('ans'),ANSWER,44));
       }));
     });
+    at(9700,()=>play('vo3',VOL.vo));
 
     // 4 · proof
-    at(21500,()=>show('s4'));
+    at(21500,()=>{show('s4');play('transition',VOL.transition);});
+    at(21900,()=>play('vo4',VOL.vo));
 
     // 5 · close
-    at(28200,()=>show('s5'));
+    at(28200,()=>{show('s5');play('transition',VOL.transition);});
+    at(28600,()=>play('vo5',VOL.vo));
 
-    at(34500,()=>hint.classList.remove('gone'));
+    at(33600,()=>fadeBed(1400));
+    at(35000,()=>hint.classList.remove('gone'));
   }
 
   addEventListener('keydown',e=>{
     const k=e.key.toLowerCase();
-    if(k==='r') run();
+    if(k==='r'){ if(!gate.classList.contains('gone')) gate.classList.add('gone'); run(); }
     if(k==='h') hint.classList.toggle('gone');
+    if(k==='m'){
+      muted=!muted;
+      if(muted) stopAudio(); else startBed();
+      hint.textContent = muted ? 'MUTED — M to unmute · R replay · H hide this'
+                               : 'R replay · M mute · H hide this';
+    }
+  });
+
+  gate.addEventListener('click',()=>{
+    gate.classList.add('gone');
+    run();
   });
 
   window.__run=run;
-  run();
 })();
 </script>
 </body>
